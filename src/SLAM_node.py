@@ -70,7 +70,7 @@ class Lidar(Mapping):
 
             hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle)
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds, hit_pt_inds)
-            
+
             self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
     def get_probability_map(self):
