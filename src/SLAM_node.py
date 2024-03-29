@@ -20,11 +20,11 @@ class Mapping(Grid):
                  p_occ: float=0.8, 
                  p_prior: float=0.5):
         
-        # Initialize occupancy grid
+        # Initialize occupancy grid with p_prior
         self.occupancy_grid = np.zeros((
             self.grid_size_x, 
             self.grid_size_y
-            ))  # Initialize with unknown occupancy
+            ))
         
         self.log_odds_free  = self._prob_to_log_odds(p_free)
         self.log_odds_occ   = self._prob_to_log_odds(p_occ)
@@ -46,7 +46,6 @@ class Lidar(Mapping):
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
 
     def _coords_to_grid_indicies(self, x, y, w):
-
         grid_x = int((x - self.grid_origin_x) / self.grid_resolution)
         grid_y = int((y - self.grid_origin_y) / self.grid_resolution)
         grid_w = int(w / self.grid_resolution)
@@ -56,8 +55,7 @@ class Lidar(Mapping):
 
         ranges = np.asarray(data.ranges)
         x, y, w = get_pose_of_robot()
-        grid_pose = self._coords_to_grid_indicies(x, y, w)
-        obs_pt_inds = grid_pose[:2]
+        obs_pt_inds = self._coords_to_grid_indicies(x, y, w)
 
         for i in range(len(ranges)):
             # Get angle of range
@@ -69,7 +67,7 @@ class Lidar(Mapping):
             hit_y = y + np.sin(beam_angle) * ranges[i]
 
             hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle)
-            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds, hit_pt_inds)
+            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
 
             self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
