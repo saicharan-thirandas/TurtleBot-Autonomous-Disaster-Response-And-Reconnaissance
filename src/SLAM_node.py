@@ -61,7 +61,7 @@ class Lidar(Mapping):
             # Get angle of range
             angle = i * data.angle_increment
 
-            # Get x,y position of laser can in the map
+            # Get x,y position of laser beam in the map
             beam_angle = w + angle
             hit_x = x + np.cos(beam_angle) * ranges[i]
             hit_y = y + np.sin(beam_angle) * ranges[i]
@@ -117,6 +117,22 @@ class GTSAM:
         self.graph.add(priorFactor)
         self.initial_estimate.insert(None, priorMean)
 
+## ---------------------------------------------------------------- Subscribe to april tag
+    def apriltag_callback(self, msg):
+        # Process AprilTag detections and add observation factors to the factor graph
+        for detection in msg.detections:
+            tag_id = detection.id[0]
+
+            if tag_id not in self.landmark_set:
+                self.landmark_set.add(tag_id)
+                self.initial_estimates.insert(L(tag_id), Pose2())
+
+            relative_pose = Pose2(detection.pose.pose.pose.position.x,
+                                  detection.pose.pose.pose.position.y,
+                                  detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
+
+            self.factorgraph.add(BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
+## ----------------------------------------------------------------
     def optimize(self):
 
         params = gtsam.LevenbergMarquardtParams()
