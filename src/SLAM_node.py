@@ -3,6 +3,7 @@ import numpy as np
 from dataclasses import dataclass
 import rospy
 from nav_msgs.msg import OccupancyGrid
+from sensor_msgs.msg import LaserScan
 
 
 @dataclass
@@ -39,6 +40,14 @@ class Mapping(Grid):
 
 class Lidar(Mapping):
 
+    def __init__(self):
+
+        self.subscriber = rospy.Subscriber(
+            '/scan', 
+            LaserScan, 
+            self.update_map
+        )
+
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds):
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
@@ -71,11 +80,13 @@ class Lidar(Mapping):
 
             self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
+        self.publish()
+
     def get_probability_map(self):
         return super()._log_odds_to_prob(self.occupancy_grid)
 
     def publish(self):
-
+        # TODO: Setup publisher for this map
          # Conver the map to a 1D array
         self.map_update = OccupancyGrid()
         self.map_update.header.frame_id = "map_laser"
@@ -100,6 +111,9 @@ class GTSAM:
             np.array([0.1, 0.1, 0.1])
         )
 
+        # # Define occupancy grid factor noise model
+        self.occupancy_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1]))
+
         # Create a factor graph
         self.graph = gtsam.NonlinearFactorGraph()
 
@@ -113,26 +127,52 @@ class GTSAM:
     def _initialize_graph(self):
 
         priorMean   = gtsam.Pose2(0.0, 0.0, 0.0)
-        priorFactor = gtsam.PriorFactorPose2(None, priorMean, self.prior_noise)
+        priorFactor = gtsam.PriorFactorPose2(None, priorMean, self.prior_noise) # <<<< None
         self.graph.add(priorFactor)
-        self.initial_estimate.insert(None, priorMean)
+        self.initial_estimate.insert(None, priorMean) # <<<< None
 
 ## ---------------------------------------------------------------- Subscribe to april tag
-    def apriltag_callback(self, msg):
-        # Process AprilTag detections and add observation factors to the factor graph
+    def add_tag_factors(self, msg):
+        
+        # TODO: Process AprilTag detections and add observation factors to the factor graph
+        # Should this be from the original poses or from the most recent output of april_tag_tracker.py?
         for detection in msg.detections:
             tag_id = detection.id[0]
 
             if tag_id not in self.landmark_set:
                 self.landmark_set.add(tag_id)
-                self.initial_estimates.insert(L(tag_id), Pose2())
+                self.initial_estimates.insert(L(tag_id), gtsam.Pose2())
 
-            relative_pose = Pose2(detection.pose.pose.pose.position.x,
+            relative_pose = gtsam.Pose2(detection.pose.pose.pose.position.x,
                                   detection.pose.pose.pose.position.y,
                                   detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
 
-            self.factorgraph.add(BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
+            self.graph.add(BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
 ## ----------------------------------------------------------------
+
+    def add_grid_factors(self):
+        # TODO: Create occupancy grid factors for GTSAM
+        grid_factors = []
+        for x in range(grid_size_x):
+            for y in range(grid_size_y):
+                if occupancy_grid[x, y] != 0:  # Skip free cells
+                    # Create factor for occupied cell
+                    factor = gtsam.RangeFactor(
+                        1,  # Pose variable index
+                        gtsam.Point2((grid_origin_x + x * grid_resolution), (grid_origin_y + y * grid_resolution)),
+                        1.0,  # Range (distance to obstacle)
+                        self.occupancy_noise
+                    )
+                    grid_factors.append(factor)
+
+        # Add occupancy grid factors to the factor graph
+        for factor in grid_factors:
+            self.graph.add(factor)
+
+    def add_odem_factors(self):
+            # TODO: Use snippets from HW_5
+            pass
+
     def optimize(self):
 
         params = gtsam.LevenbergMarquardtParams()
@@ -140,3 +180,9 @@ class GTSAM:
         result = optimizer.optimize()
         marginals = gtsam.Marginals(self.graph, result)
         return result, marginals
+    
+    def publish_poses(self):
+
+        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i
+        # TODO: Get robot pose
+        pass

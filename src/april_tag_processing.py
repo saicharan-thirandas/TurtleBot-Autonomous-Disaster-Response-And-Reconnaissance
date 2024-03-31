@@ -24,7 +24,7 @@ class AprilTagDetector(Node):
         )
         self.image_sub  # Prevent unused variable warning
 
-        # Subscribe to pose of robot and SLAM map estimation
+        # >>>>>>>>>>>>>> Subscribe to pose of robot and SLAM map estimation <<<<<<<<<<<<<<
 
         self.image_pub = self.create_publisher(
             msg_type=Image, 
@@ -65,7 +65,10 @@ class AprilTagDetector(Node):
             tag_size=0.06
         )
 
-        # # Publish detected tag poses
+        if len(detections) == 0:
+            return
+        
+        # Publish detected tag poses
         tag_msg = AprilTagDetectionArray()
         tag_msg.header = msg.header
         for detection in detections:
@@ -93,6 +96,12 @@ class AprilTagDetector(Node):
             tag_msg.detections.append(tag)
 
         self.tag_publisher.publish(tag_msg)
+
+        try:
+            self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
+        except CvBridgeError as e:
+            self.get_logger().error(f"CV Bridge Error: {e}")
+            return
 
 # In subscriber: 
         # for tag_detection in tag_msgs:
