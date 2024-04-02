@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import rospy
 from nav_msgs.msg import OccupancyGrid
 from sensor_msgs.msg import LaserScan
+from apriltag_ros.msg import AprilTagDetectionArray
 
 
 @dataclass
@@ -42,11 +43,14 @@ class Lidar(Mapping):
 
     def __init__(self):
 
-        self.subscriber = rospy.Subscriber(
-            '/scan', 
-            LaserScan, 
-            self.update_map
+        self.lidar_sub = rospy.Subscriber(
+            name='/scan', 
+            data_class=LaserScan, 
+            callback=self.update_map
         )
+
+    def get_probability_map(self):
+        return super()._log_odds_to_prob(self.occupancy_grid)
 
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds):
         diff = hit_pt_inds - obs_pt_inds
@@ -60,15 +64,15 @@ class Lidar(Mapping):
         grid_w = int(w / self.grid_resolution)
         return np.array([grid_x, grid_y, grid_w])        
 
-    def update_map(self, data):
+    def update_map(self, lidar_msg):
 
-        ranges = np.asarray(data.ranges)
-        x, y, w = get_pose_of_robot()
+        ranges = np.asarray(lidar_msg.ranges)
+        x, y, w = self.robot_pose # TODO: Make this variable from 
         obs_pt_inds = self._coords_to_grid_indicies(x, y, w)
 
         for i in range(len(ranges)):
             # Get angle of range
-            angle = i * data.angle_increment
+            angle = i * lidar_msg.angle_increment
 
             # Get x,y position of laser beam in the map
             beam_angle = w + angle
@@ -81,9 +85,6 @@ class Lidar(Mapping):
             self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
         self.publish()
-
-    def get_probability_map(self):
-        return super()._log_odds_to_prob(self.occupancy_grid)
 
     def publish(self):
         # TODO: Setup publisher for this map
@@ -99,7 +100,7 @@ class Lidar(Mapping):
         # self.pub.publish(self.map_update)
 
 
-class GTSAM:
+class GTSAM(Lidar):
 
     def __init__(self):
 
@@ -111,7 +112,13 @@ class GTSAM:
             np.array([0.1, 0.1, 0.1])
         )
 
-        # # Define occupancy grid factor noise model
+        self.tag_sub = rospy.Subscriber(
+            name='/tag_detections', 
+            data_class=AprilTagDetectionArray, 
+            callback=self.add_tag_factors
+        )
+
+        # Define occupancy grid factor noise model
         self.occupancy_noise = gtsam.noiseModel.Diagonal.Sigmas(np.array([0.1]))
 
         # Create a factor graph
@@ -131,7 +138,6 @@ class GTSAM:
         self.graph.add(priorFactor)
         self.initial_estimate.insert(None, priorMean) # <<<< None
 
-## ---------------------------------------------------------------- Subscribe to april tag
     def add_tag_factors(self, msg):
         
         # TODO: Process AprilTag detections and add observation factors to the factor graph
@@ -144,11 +150,10 @@ class GTSAM:
                 self.initial_estimates.insert(L(tag_id), gtsam.Pose2())
 
             relative_pose = gtsam.Pose2(detection.pose.pose.pose.position.x,
-                                  detection.pose.pose.pose.position.y,
-                                  detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
+                                        detection.pose.pose.pose.position.y,
+                                        detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
 
             self.graph.add(BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
-## ----------------------------------------------------------------
 
     def add_grid_factors(self):
         # TODO: Create occupancy grid factors for GTSAM
@@ -183,6 +188,20 @@ class GTSAM:
     
     def publish_poses(self):
 
-        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i
+        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i; will this be redunant to tracker?
         # TODO: Get robot pose
         pass
+
+    def run(self):
+
+        rate = rospy.Rate(1)  # 1 Hz
+        # Get initial pose
+        # Publish updated pose
+        while not rospy.is_shutdown():
+            # add_odem_factors(...)
+            # Get msgs from /scan (and publish occupancy map - update_map(...))
+            # add_grid_factors(...)?
+            # Get msgs from /tag_detections (and add_tag_factors(...))
+            # Optimize SLAM graph to get pose
+            # Publish updated pose
+            rate.sleep()
