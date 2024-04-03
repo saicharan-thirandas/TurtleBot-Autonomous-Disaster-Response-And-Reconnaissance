@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import gtsam
 import numpy as np
 from dataclasses import dataclass
@@ -9,7 +11,7 @@ from apriltag_ros.msg import AprilTagDetectionArray
 
 @dataclass
 class Grid:
-    grid_resolution = 0.1  # meters per grid cell
+    grid_resolution = 0.1 # meters per grid cell
     grid_size_x = 100  # number of grid cells in the x direction
     grid_size_y = 100  # number of grid cells in the y direction
     grid_origin_x = -5.0  # origin of the grid in the x direction
@@ -43,10 +45,18 @@ class Lidar(Mapping):
 
     def __init__(self):
 
+        super(Lidar, self).__init__()
         self.lidar_sub = rospy.Subscriber(
             name='/scan', 
             data_class=LaserScan, 
             callback=self.update_map
+        )
+
+        # Publish processed occupancy map
+        self.occ_map_pub = rospy.Publisher(
+            name='/occupancy_map',
+            dataclass=OccupancyGrid,
+            queue_size=10
         )
 
     def get_probability_map(self):
@@ -67,7 +77,7 @@ class Lidar(Mapping):
     def update_map(self, lidar_msg):
 
         ranges = np.asarray(lidar_msg.ranges)
-        x, y, w = self.robot_pose # TODO: Make this variable from 
+        x, y, w = self.robot_pose # TODO: Make this variable. Need to figure out how. From SLAM or Odometry?  
         obs_pt_inds = self._coords_to_grid_indicies(x, y, w)
 
         for i in range(len(ranges)):
@@ -80,17 +90,19 @@ class Lidar(Mapping):
             hit_y = y + np.sin(beam_angle) * ranges[i]
 
             hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle)
-            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+            self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
 
+            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
             self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
         self.publish()
 
     def publish(self):
-        # TODO: Setup publisher for this map
+
+        # TODO: Figure out attributes to pubish map
          # Conver the map to a 1D array
         self.map_update = OccupancyGrid()
-        self.map_update.header.frame_id = "map_laser"
+        self.map_update.header.frame_id = "occupancy_grid"
         self.map_update.header.stamp = rospy.Time.now()
         # self.map_update.info = self.map_laser.info
         # self.map_update.data = self.laser_arr.flatten('F')
@@ -101,8 +113,12 @@ class Lidar(Mapping):
 
 
 class GTSAM(Lidar):
+    """ Encapsulates functions for GTSAM. """
 
     def __init__(self):
+
+        rospy.init_node('slam_node', anonymous=True)
+        super(GTSAM, self).__init__()
 
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
@@ -116,6 +132,13 @@ class GTSAM(Lidar):
             name='/tag_detections', 
             data_class=AprilTagDetectionArray, 
             callback=self.add_tag_factors
+        )
+
+        # Publish predicted pose
+        self.pose_pub = rospy.Publisher(
+            name='/turtle_pose',
+            dataclass=None, # TODO: Figure out dataclass to use for pose
+            queue_size=10
         )
 
         # Define occupancy grid factor noise model
@@ -134,14 +157,14 @@ class GTSAM(Lidar):
     def _initialize_graph(self):
 
         priorMean   = gtsam.Pose2(0.0, 0.0, 0.0)
-        priorFactor = gtsam.PriorFactorPose2(None, priorMean, self.prior_noise) # <<<< None
+        priorFactor = gtsam.PriorFactorPose2(None, priorMean, self.prior_noise) # TODO: Use appropriate shorthand variables 
         self.graph.add(priorFactor)
-        self.initial_estimate.insert(None, priorMean) # <<<< None
+        self.initial_estimate.insert(None, priorMean) # TODO: Use appropriate shorthand variables
 
     def add_tag_factors(self, msg):
         
-        # TODO: Process AprilTag detections and add observation factors to the factor graph
-        # Should this be from the original poses or from the most recent output of april_tag_tracker.py?
+        # TODO: Process AprilTag detections/tracking and add observation factors to the factor graph
+        # Should this be from the original poses (T_CA -> T_OA via T_OA = T_OR @ T_RC @ T_CA) or from the most recent output of april_tag_tracker.py?
         for detection in msg.detections:
             tag_id = detection.id[0]
 
@@ -153,18 +176,19 @@ class GTSAM(Lidar):
                                         detection.pose.pose.pose.position.y,
                                         detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
 
-            self.graph.add(BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
+            self.graph.add(gtsam.BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
 
     def add_grid_factors(self):
-        # TODO: Create occupancy grid factors for GTSAM
+
+        # TODO: Create occupancy grid factors for GTSAM. Is this needed?
         grid_factors = []
-        for x in range(grid_size_x):
-            for y in range(grid_size_y):
-                if occupancy_grid[x, y] != 0:  # Skip free cells
+        for x in range(self.grid_size_x):
+            for y in range(self.grid_size_y):
+                if self.occupancy_grid[x, y] != 0:  # TODO: What should the conditional be to use occupied cells?
                     # Create factor for occupied cell
                     factor = gtsam.RangeFactor(
-                        1,  # Pose variable index
-                        gtsam.Point2((grid_origin_x + x * grid_resolution), (grid_origin_y + y * grid_resolution)),
+                        1,  # TODO: Use a shorthand variable
+                        gtsam.Point2((self.grid_origin_x + x * self.grid_resolution), (self.grid_origin_y + y * self.grid_resolution)),
                         1.0,  # Range (distance to obstacle)
                         self.occupancy_noise
                     )
@@ -175,7 +199,8 @@ class GTSAM(Lidar):
             self.graph.add(factor)
 
     def add_odem_factors(self):
-            # TODO: Use snippets from HW_5
+            # TODO: Use snippets from HW_5, to add odometry factor
+            # TODO: Check if turtlebot publishes its odometry as a message ('/odom')
             pass
 
     def optimize(self):
@@ -186,13 +211,14 @@ class GTSAM(Lidar):
         marginals = gtsam.Marginals(self.graph, result)
         return result, marginals
     
-    def publish_poses(self):
+    def publish_poses(self, result):
 
-        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i; will this be redunant to tracker?
-        # TODO: Get robot pose
-        pass
-
+        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i. Will this be redunant to tracker?
+        curr_pose = result.atPose2(self.poses[-1]) # TODO: Make sure self.poses is updated, and -1 is the correct index to use
+        # TODO: Publish poses with self.pose_pub.publish(...)
+        
     def run(self):
+        # TODO: Finish this function
 
         rate = rospy.Rate(1)  # 1 Hz
         # Get initial pose
@@ -205,3 +231,11 @@ class GTSAM(Lidar):
             # Optimize SLAM graph to get pose
             # Publish updated pose
             rate.sleep()
+
+if __name__ == '__main__':
+    
+    try:
+        slam = GTSAM()
+        slam.run()
+    except rospy.ROSInterruptException: 
+    	rospy.loginfo("Shutting slam_node down ...")

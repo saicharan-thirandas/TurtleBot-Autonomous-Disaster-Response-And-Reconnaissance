@@ -22,7 +22,7 @@ class SensorFusion(Node):
                                            [0, 1, 0], 
                                            [0, 0, 1]])
         
-        self.lidar_to_camera = np.array([[1, 0, 0,   0],  # TODO: Measure this properly
+        self.lidar_to_camera = np.array([[1, 0, 0,   0], 
                                          [0, 1, 0, -10], 
                                          [0, 0, 1,   0]])
         
