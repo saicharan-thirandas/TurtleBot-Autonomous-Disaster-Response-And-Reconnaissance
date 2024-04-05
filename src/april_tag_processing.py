@@ -107,6 +107,7 @@ class AprilTagDetector():
 
         try:
             # TODO: On the image draw 3D or 2D bbox of the April Tag
+            # cv_image = some_drawing_func(cv_image, inputs)
             self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
         except CvBridgeError as e:
             self.get_logger().error(f"CV Bridge Error: {e}")
