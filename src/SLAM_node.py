@@ -4,7 +4,7 @@ import gtsam
 import numpy as np
 from dataclasses import dataclass
 import rospy
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from apriltag_ros.msg import AprilTagDetectionArray
 
@@ -52,12 +52,19 @@ class Lidar(Mapping):
             callback=self.update_map
         )
 
+        self.lidar_sub = rospy.Subscriber(
+            name='/odom', 
+            data_class=Odometry, 
+            callback=self.update_odom
+        )
+
         # Publish processed occupancy map
         self.occ_map_pub = rospy.Publisher(
             name='/occupancy_map',
             dataclass=OccupancyGrid,
             queue_size=10
         )
+        self.odom = [0., 0., 0.]
 
     def get_probability_map(self):
         return super()._log_odds_to_prob(self.occupancy_grid)
@@ -72,24 +79,33 @@ class Lidar(Mapping):
         grid_x = int((x - self.grid_origin_x) / self.grid_resolution)
         grid_y = int((y - self.grid_origin_y) / self.grid_resolution)
         grid_w = int(w / self.grid_resolution)
-        return np.array([grid_x, grid_y, grid_w])        
+        return np.array([grid_x, grid_y, grid_w])
+    
+    def update_odom(self, odom_msg):
+        x = odom_msg.pose.pose.position.x
+        y = odom_msg.pose.pose.position.y
+        w = odom_msg.pose.pose.orientation # TODO: Get heading angle using odom.txt as example
+        self.odom = [x, y, w]
 
     def update_map(self, lidar_msg):
 
         ranges = np.asarray(lidar_msg.ranges)
-        x, y, w = self.robot_pose # TODO: Make this variable. Need to figure out how. From SLAM or Odometry?  
+        x, y, w = self.odom
         obs_pt_inds = self._coords_to_grid_indicies(x, y, w)
 
         for i in range(len(ranges)):
             # Get angle of range
-            angle = i * lidar_msg.angle_increment
+            angle_rad = i * lidar_msg.angle_increment
+
+            if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
+                continue
 
             # Get x,y position of laser beam in the map
-            beam_angle = w + angle
-            hit_x = x + np.cos(beam_angle) * ranges[i]
-            hit_y = y + np.sin(beam_angle) * ranges[i]
+            beam_angle_rad = w + angle_rad
+            hit_x = x + np.cos(beam_angle_rad) * ranges[i]
+            hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
-            hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle)
+            hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
             self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
 
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
@@ -149,23 +165,24 @@ class GTSAM(Lidar):
 
         # Create an initial estimate for the robot's pose (e.g., based on odometry)
         self.initial_estimate = gtsam.Values()
-        self.current_state_index = 0
-        self.poses = []
+        self.current_pose = 0
 
         self._initialize_graph()
 
     def _initialize_graph(self):
 
+        assert self.current_pose == 0
         priorMean   = gtsam.Pose2(0.0, 0.0, 0.0)
-        priorFactor = gtsam.PriorFactorPose2(None, priorMean, self.prior_noise) # TODO: Use appropriate shorthand variables 
+        priorFactor = gtsam.PriorFactorPose2(X(self.current_pose), priorMean, self.prior_noise) # TODO: Use appropriate shorthand variables 
         self.graph.add(priorFactor)
-        self.initial_estimate.insert(None, priorMean) # TODO: Use appropriate shorthand variables
+        self.initial_estimate.insert(X(self.current_pose), priorMean) # TODO: Use appropriate shorthand variables
+        # self.current_pose += 1 # Publish should take care of this += 1
 
-    def add_tag_factors(self, msg):
+    def add_tag_factors(self, apriltag_msg):
         
         # TODO: Process AprilTag detections/tracking and add observation factors to the factor graph
         # Should this be from the original poses (T_CA -> T_OA via T_OA = T_OR @ T_RC @ T_CA) or from the most recent output of april_tag_tracker.py?
-        for detection in msg.detections:
+        for detection in apriltag_msg.detections:
             tag_id = detection.id[0]
 
             if tag_id not in self.landmark_set:
@@ -176,7 +193,7 @@ class GTSAM(Lidar):
                                         detection.pose.pose.pose.position.y,
                                         detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
 
-            self.graph.add(gtsam.BetweenFactor(X(self.pose_counter), L(tag_id), relative_pose, self.apriltag_noise))
+            self.graph.add(gtsam.BetweenFactor(X(self.current_pose), L(tag_id), relative_pose, self.apriltag_noise))
 
     def add_grid_factors(self):
 
@@ -199,9 +216,24 @@ class GTSAM(Lidar):
             self.graph.add(factor)
 
     def add_odem_factors(self):
-            # TODO: Use snippets from HW_5, to add odometry factor
-            # TODO: Check if turtlebot publishes its odometry as a message ('/odom')
-            pass
+
+        # TODO: Use snippets from HW_5, to add odometry factor
+        assert self.current_pose >= 1
+        odometry = gtsam.Pose2(self.odom)
+
+        self.initial_estimate.insert(
+            X(self.current_pose), 
+            self.initial_estimate.atPose2( X(self.current_pose-1) ).compose(odometry)
+        )
+
+        self.graph.add(
+            gtsam.BetweenFactor(
+                X(self.current_pose-1), 
+                X(self.current_pose), 
+                odometry, 
+                self.odometry_noise
+            )
+        )
 
     def optimize(self):
 
@@ -213,8 +245,8 @@ class GTSAM(Lidar):
     
     def publish_poses(self, result):
 
-        tag_poses = [result.atPose2(i) for i in range(1, num_tags + 1)] # TODO: Use landmark variable, NOT i. Will this be redunant to tracker?
-        curr_pose = result.atPose2(self.poses[-1]) # TODO: Make sure self.poses is updated, and -1 is the correct index to use
+        curr_pose = result.atPose2( X(self.current_pose) )
+        self.current_pose += 1
         # TODO: Publish poses with self.pose_pub.publish(...)
         
     def run(self):
