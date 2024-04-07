@@ -114,11 +114,7 @@ class AprilTagDetector():
             return
         
     def run(self):
-
-        rate = rospy.Rate(1)  # 1 Hz
-        while not rospy.is_shutdown():
-            # Pass TODO: What should go here?
-            rate.sleep()
+        rospy.spin()
         
 if __name__ == '__main__':
     
