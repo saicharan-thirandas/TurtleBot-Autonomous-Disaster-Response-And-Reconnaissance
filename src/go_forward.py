@@ -6,9 +6,7 @@ from geometry_msgs.msg import Twist
 class GoForward:
     
     def forward(self, lin, ang):
-        
-        rospy.loginfo("Moving - lin : {} ang : {}".format(lin,ang))
-        
+
         move_cmd = Twist()
         move_cmd.linear.x = lin
         move_cmd.angular.z = ang
