@@ -61,7 +61,7 @@ class Lidar(Mapping):
         # Publish processed occupancy map
         self.occ_map_pub = rospy.Publisher(
             name='/occupancy_map',
-            dataclass=OccupancyGrid,
+            data_class=OccupancyGrid,
             queue_size=10
         )
         self.odom = [0., 0., 0.]
@@ -153,7 +153,7 @@ class GTSAM(Lidar):
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name='/turtle_pose',
-            dataclass=None, # TODO: Figure out dataclass to use for pose
+            data_class=None, # TODO: Figure out dataclass to use for pose
             queue_size=10
         )
 

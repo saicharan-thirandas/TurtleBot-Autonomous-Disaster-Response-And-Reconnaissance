@@ -8,7 +8,8 @@ import rospy
 from apriltag_ros.msg import AprilTagDetectionArray, AprilTagDetection
 from pupil_apriltags import Detector
 from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
+from cv_bridge import CvBridge, CvBridgeError
+import cv2
 
 
 # TODO: Confirm these; i.e. perform camera calibration
@@ -18,16 +19,46 @@ CX = 1.64e3
 CY = 1.21e3
 
 
+def draw_bbox(image, corners, center, tag_fam):
+
+    (ptA, ptB, ptC, ptD) = corners
+
+    ptB = (int(ptB[0]), int(ptB[1]))
+    ptC = (int(ptC[0]), int(ptC[1]))
+    ptD = (int(ptD[0]), int(ptD[1]))
+    ptA = (int(ptA[0]), int(ptA[1]))
+
+    cv2.line(image, ptA, ptB, (0, 255, 0), 2)
+    cv2.line(image, ptB, ptC, (0, 255, 0), 2)
+    cv2.line(image, ptC, ptD, (0, 255, 0), 2)
+    cv2.line(image, ptD, ptA, (0, 255, 0), 2)
+
+    (cX, cY) = (int(center[0]), int(center[1]))
+    cv2.circle(image, (cX, cY), 5, (0, 0, 255), -1)
+    cv2.putText(
+        image, 
+        tag_fam, 
+        (ptA[0], ptA[1] - 15), 
+        cv2.FONT_HERSHEY_SIMPLEX, 
+        0.5, 
+        (0, 255, 0), 
+        2
+    )
+
+
 class AprilTagDetector():
 
     def __init__(self):
 
         rospy.init_node('april_tag_detector', anonymous=True)
         self.bridge = CvBridge()
+        
+        # Initialize AprilTag detector
+        self.detector = Detector(families="tag36h11")
 
         # Subscribe to camera image topic
         self.image_sub = rospy.Subscriber(
-            name='/camera/image_raw',
+            name='/camera_rect/image_raw',
             data_class=Image,
             callback=self.image_callback,
             queue_size=10
@@ -35,20 +66,17 @@ class AprilTagDetector():
 
         # Publish processed image
         self.image_pub = rospy.Publisher(
-            name='/image_converter/output_video',
-            dataclass=Image,
+            name='/output_video',
+            data_class=Image,
             queue_size=10
         )
 
         # Publish detected AprilTag poses
         self.tag_publisher = rospy.Publisher(
             name='/tag_detections', 
-            dataclass=AprilTagDetectionArray, 
+            data_class=AprilTagDetectionArray, 
             queue_size=10
         )
-
-        # Initialize AprilTag detector
-        self.detector = Detector(families="tag36h11")
 
     def image_callback(self, msg):
 
@@ -56,7 +84,7 @@ class AprilTagDetector():
             # Convert ROS Image message to OpenCV format
             cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except CvBridgeError as e:
-            self.get_logger().error(f"CV Bridge Error: {e}")
+            rospy.logerr(f"CV Bridge Error: {e}")
             return
 
         # Convert image to grayscale (AprilTag library requires grayscale images)
@@ -82,18 +110,17 @@ class AprilTagDetector():
         for detection in detections:
             tag = AprilTagDetection()
 
-            tag_id   = detection["id"]
+            tag_id   = detection.tag_id
             tag_fam  = detection.tag_family.decode("utf-8")
-            tag_size = detection["tag_family"]
-            tag_size = int(tag_size.replace("tag", ""))
+
+            draw_bbox(cv_image, detection.corners, detection.center, tag_fam)
 
             rot = detection.pose_R
             t = detection.pose_t
             r = R.from_matrix(rot)
             q = r.as_quat()
-            
-            tag.id = tag_id
-            tag.size = tag_size
+
+            tag.id.append(tag_id)
             tag.pose.pose.pose.position.x = t[0]
             tag.pose.pose.pose.position.y = t[1]
             tag.pose.pose.pose.position.z = t[2]
@@ -106,11 +133,9 @@ class AprilTagDetector():
         self.tag_publisher.publish(tag_msg)
 
         try:
-            # TODO: On the image draw 3D or 2D bbox of the April Tag
-            # cv_image = some_drawing_func(cv_image, inputs)
             self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
         except CvBridgeError as e:
-            self.get_logger().error(f"CV Bridge Error: {e}")
+            rospy.logerr(f"CV Bridge Error: {e}")
             return
         
     def run(self):

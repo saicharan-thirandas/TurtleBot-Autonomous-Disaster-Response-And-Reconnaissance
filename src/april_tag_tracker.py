@@ -35,7 +35,7 @@ class AprilTagTracker():
         # Publish tracked AprilTag poses
         self.tag_track_pub = rospy.Publisher(
             name='/tag_tracker', 
-            dataclass=AprilTagDetectionArray, 
+            data_class=AprilTagDetectionArray, 
             queue_size=10
         )
 
@@ -82,8 +82,6 @@ class AprilTagTracker():
 
             tag_id   = tag_detection.id[0]
             tag_pose = tag_detection.pose.pose.pose
-            tag_size = tag_detection["tag_family"]
-            tag_size = int(tag_size.replace("tag", ""))
             in_camera.append(tag_id)
 
             t = [tag_pose.position.x, 
