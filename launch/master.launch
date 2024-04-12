@@ -28,10 +28,4 @@
     <node pkg="squirtle" type="AprilTagTracker" name="april_tag_tracker" output="screen">
         <!-- Additional parameters can be added here if required -->
     </node>
-
-    <!-- RViz for visualization -->
-    <group if="$(arg open_rviz)">
-        <node pkg="rviz" type="rviz" name="rviz" required="true"
-              args="-d $(find squirtle)/config/turtlebot3_cartographer.rviz"/>
-    </group>
 </launch>
