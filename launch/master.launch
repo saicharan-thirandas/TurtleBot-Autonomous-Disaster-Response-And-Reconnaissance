@@ -5,27 +5,18 @@
     <arg name="open_rviz" default="true"/>
     <arg name="multi_robot_name" default=""/>
     <arg name="launch_prefix" default="" />
-    <arg name="camera_name" default="/camera" />
-    <arg name="image_topic" default="image" />
     <arg name="queue_size" default="10" />
+    <arg name="camera_topic" default="/camera_rect/image_raw"/>
     <arg name="cmd_vel_topic" default="/cmd_vel" />
-    <arg name="odom_topic" default="odom" />
+    <arg name="odom_topic" default="/odom" />
+    <arg name="lidar_topic" default="/scan" />
+    <arg name="image_topic" default="/output_video"/>
     <arg name="move_forward_only" default="false"/>
 
     <!-- Existing nodes -->
-    <node pkg="squirtle" type="lidar2camera" name="sensor_fusion" output="screen" />
-    <node pkg="squirtle" type="april_tag_processing" name="april_tag_processing_node" output="screen" />
-    <node pkg="squirtle" type="april_tag_tracker" name="april_tag_tracker_node" output="screen" />
-    <node pkg="squirtle" type="go_forward" name="go_forward_node" output="screen" />
-    <node pkg="squirtle" type="navigation_node" name="navigation_node" output="screen" />
-
-    <!-- AprilTag Detector Node -->
-    <node pkg="squirtle" type="AprilTagDetector" name="april_tag_detector" output="screen">
-        <!-- Additional parameters can be added here if required -->
-    </node>
-
-    <!-- AprilTag Tracker Node -->
-    <node pkg="squirtle" type="AprilTagTracker" name="april_tag_tracker" output="screen">
-        <!-- Additional parameters can be added here if required -->
-    </node>
+    <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
+    <node pkg="squirtle" type="go_forward.py" name="navigation" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="SLAM_node.py" name="slam" output="screen"> </node> --> <!-- still needs work -->
+    <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen"> </node> -->
 </launch>
