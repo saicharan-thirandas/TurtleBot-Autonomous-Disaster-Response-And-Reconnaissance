@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import gtsam
+from gtsam.symbol_shorthand import X, L
 import numpy as np
 from dataclasses import dataclass
 import rospy
@@ -48,19 +49,22 @@ class Lidar(Mapping):
     def __init__(self):
 
         super(Lidar, self).__init__()
-        self.lidar_sub = rospy.Subscriber(
-            name='/scan', 
-            data_class=LaserScan, 
-            callback=self.update_map
-        )
-
+        # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
             name='/odom', 
             data_class=Odometry, 
             callback=self.update_odom
         )
 
+        # Subscribe to the lidar messages
+        self.lidar_sub = rospy.Subscriber(
+            name='/scan', 
+            data_class=LaserScan, 
+            callback=self.update_map
+        )
+
         # Publish processed occupancy map
+        self._init_occupancy_map()
         self.occ_map_pub = rospy.Publisher(
             name='/occupancy_map',
             data_class=OccupancyGrid,
@@ -119,23 +123,30 @@ class Lidar(Mapping):
 
         self.publish()
 
+    def _init_occupancy_map(self):
+
+        self.map_init = OccupancyGrid()
+        self.map_init.info.width = self.grid_size_x
+        self.map_init.info.height = self.grid_size_y
+        self.map_init.info.resolution = self.grid_resolution
+        self.map_init.info.origin.position.x = self.grid_origin_x
+        self.map_init.info.origin.position.y = self.grid_origin_y
+        self.map_init.info.origin.position.z = 0
+        self.map_init.info.origin.orientation.x = 0
+        self.map_init.info.origin.orientation.y = 0
+        self.map_init.info.origin.orientation.z = 0
+        self.map_init.info.origin.orientation.w = 1
+        self.map_init.data = self.occupancy_grid.flatten().astype(np.int8)
+
     def publish(self):
         # Conver the map to a 1D array
         self.map_update = OccupancyGrid()
         self.map_update.header.frame_id = "occupancy_grid"
         self.map_update.header.stamp = rospy.Time.now()
-        self.map_update.info.width = self.grid_size_x
-        self.map_update.info.height = self.grid_size_y
-        self.map_update.info.origin.position.x = self.grid_origin_x
-        self.map_update.info.origin.position.y = self.grid_origin_y
-        self.map_update.info.origin.orientation.x = 0
-        self.map_update.info.origin.orientation.y = 0
-        self.map_update.info.origin.orientation.z = 0
-        self.map_update.info.origin.orientation.w = 1
-        self.map_update.data = self.occupancy_grid.flatten('F')
-        self.map_update.data = self.map_update.data.flatten().astype(np.int8)
+        self.map_update.info = self.map_init.info
+        self.map_update.data = self.occupancy_grid.flatten().astype(np.int8)
         # Publish the map
-        self.pub.publish(self.map_update)
+        self.occ_map_pub.publish(self.map_update)
 
 
 class GTSAM(Lidar):
@@ -154,11 +165,10 @@ class GTSAM(Lidar):
             np.array([0.1, 0.1, 0.1])
         )
 
-        self.tag_sub = rospy.Subscriber(
-            name='/tag_detections', 
-            data_class=AprilTagDetectionArray, 
-            callback=self.add_tag_factors
+        self.apriltag_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.1, 0.1, 0.1])
         )
+
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name='/turtle_pose',
@@ -178,30 +188,36 @@ class GTSAM(Lidar):
 
         self._initialize_graph()
 
+        # Subscribe to the detected tags
+        self.landmark_set = set()
+        self.tag_sub = rospy.Subscriber(
+            name='/tag_detections', 
+            data_class=AprilTagDetectionArray, 
+            callback=self.add_tag_factors
+        )
+
     def _initialize_graph(self):
 
         assert self.current_pose == 0
         priorMean   = gtsam.Pose2(0.0, 0.0, 0.0)
-        priorFactor = gtsam.PriorFactorPose2(X(self.current_pose), priorMean, self.prior_noise) # TODO: Use appropriate shorthand variables 
+        priorFactor = gtsam.PriorFactorPose2(X(self.current_pose), priorMean, self.prior_noise)
         self.graph.add(priorFactor)
-        self.initial_estimate.insert(X(self.current_pose), priorMean) # TODO: Use appropriate shorthand variables
+        self.initial_estimate.insert(X(self.current_pose), priorMean)
 
     def add_tag_factors(self, apriltag_msg):
         
-        # TODO: Process AprilTag detections/tracking and add observation factors to the factor graph
-        # Should this be from the original poses (T_CA -> T_OA via T_OA = T_OR @ T_RC @ T_CA) or from the most recent output of april_tag_tracker.py?
         for detection in apriltag_msg.detections:
             tag_id = detection.id[0]
 
             if tag_id not in self.landmark_set:
                 self.landmark_set.add(tag_id)
-                self.initial_estimates.insert(L(tag_id), gtsam.Pose2())
+                self.initial_estimate.insert(L(tag_id), gtsam.Pose2())
 
             relative_pose = gtsam.Pose2(detection.pose.pose.pose.position.x,
                                         detection.pose.pose.pose.position.y,
-                                        detection.pose.pose.pose.orientation.z)  # Assuming yaw angle only
+                                        detection.pose.pose.pose.orientation.z)
 
-            self.graph.add(gtsam.BetweenFactor(X(self.current_pose), L(tag_id), relative_pose, self.apriltag_noise))
+            self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose), L(tag_id), relative_pose, self.apriltag_noise))
 
     def add_grid_factors(self):
 
@@ -234,7 +250,7 @@ class GTSAM(Lidar):
         )
 
         self.graph.add(
-            gtsam.BetweenFactor(
+            gtsam.BetweenFactorPose2(
                 X(self.current_pose-1), 
                 X(self.current_pose), 
                 odometry, 
@@ -253,7 +269,7 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose) )
-        self.current_pose += 1 # Why do we need +1?
+        self.current_pose += 1
         pose_msg = Pose()
         pose_msg.position.x = curr_pose.x()
         pose_msg.position.y = curr_pose.y()
@@ -266,21 +282,17 @@ class GTSAM(Lidar):
         self.pose_pub.publish(pose_msg)
         
     def run(self):
-        # TODO: Finish this function
 
         rate = rospy.Rate(1)  # 1 Hz
-        # Get initial pose
-        # self.current_pose
-        # Publish updated pose
-        # self.current_pose += 1
+        result, _ = self.optimize()
+        self.publish_poses(result)
         while not rospy.is_shutdown():
-            # add_odem_factors(...)
+            self.add_odem_factors()
             # Get msgs from /scan (and publish occupancy map - update_map(...))
             # add_grid_factors(...)?
             # Get msgs from /tag_detections (and add_tag_factors(...))
-            # Optimize SLAM graph to get pose
-            # Publish updated pose
-            # self.current_pose += 1
+            result, _ = self.optimize()
+            self.publish_poses(result)
             rate.sleep()
 
 if __name__ == '__main__':

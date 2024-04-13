@@ -103,6 +103,7 @@ class AprilTagDetector():
 
         if len(detections) == 0:
             return
+        rospy.loginfo(f"Sucessfully detected {len(detections)} tags")
         
         # Publish detected tag poses
         tag_msg = AprilTagDetectionArray()

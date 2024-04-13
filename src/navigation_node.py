@@ -78,5 +78,10 @@ class SimplePathPlanner:
             self.rate.sleep()
 
 if __name__ == '__main__':
-    planner = SimplePathPlanner(goal_x=2.0, goal_y=2.0)
-    planner.run()
+    
+
+    try:
+        planner = SimplePathPlanner(goal_x=2.0, goal_y=2.0)
+        planner.run()
+    except rospy.ROSInterruptException: 
+    	rospy.loginfo("Shutting navigation node down ...")
