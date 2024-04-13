@@ -3,7 +3,7 @@
 import rospy
 import numpy as np
 from geometry_msgs.msg import Twist, Pose
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, OccupancyGrid
 from tf.transformations import euler_from_quaternion
 
 class SimplePathPlanner:
@@ -16,18 +16,27 @@ class SimplePathPlanner:
         # Subscriber to get the robot's odometry
         self.odom_sub = rospy.Subscriber('/odom', Odometry, self.odom_callback)
         
+        # Subscriber to get the occupancy map
+        self.map_sub = rospy.Subscriber('/occupancy_map', OccupancyGrid, self.map_callback)
+        
         # Goal and tolerance
         self.goal = np.array([goal_x, goal_y])
         self.tolerance = tolerance
 
         # Robot's current pose
         self.current_pose = Pose()
+        
+        # Current occupancy map
+        self.occupancy_map = None
 
         # Rate
         self.rate = rospy.Rate(10)  # 10 Hz
 
     def odom_callback(self, msg):
         self.current_pose = msg.pose.pose
+
+    def map_callback(self, msg):
+        self.occupancy_map = msg
 
     def get_heading_to_goal(self):
         current_orientation = self.current_pose.orientation
