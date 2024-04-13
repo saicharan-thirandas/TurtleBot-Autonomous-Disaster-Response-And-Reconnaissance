@@ -14,7 +14,7 @@
     <arg name="move_forward_only" default="false"/>
 
     <!-- Existing nodes -->
-    <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
     <!-- <node pkg="squirtle" type="go_forward.py" name="navigation" output="screen"> </node> -->
     <node pkg="squirtle" type="SLAM_node.py" name="slam" output="screen"> </node>
     <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen"> </node>

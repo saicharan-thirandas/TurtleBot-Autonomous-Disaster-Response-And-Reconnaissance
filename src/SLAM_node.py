@@ -8,17 +8,17 @@ import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Pose
-import tf.transformations
+from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 
 
 @dataclass
 class Grid:
-    grid_resolution = 0.1 # meters per grid cell
-    grid_size_x = 100  # number of grid cells in the x direction
-    grid_size_y = 100  # number of grid cells in the y direction
-    grid_origin_x = -5.0  # origin of the grid in the x direction
-    grid_origin_y = -5.0  # origin of the grid in the y direction
+    grid_resolution = 0.05 # meters per grid cell
+    grid_size_x = 384  # number of grid cells in the x direction
+    grid_size_y = 384  # number of grid cells in the y direction
+    grid_origin_x = -10.0  # origin of the grid in the x direction
+    grid_origin_y = -10.0  # origin of the grid in the y direction
 
 
 class Mapping(Grid):
@@ -28,14 +28,14 @@ class Mapping(Grid):
                  p_prior: float=0.5):
         
         # Initialize occupancy grid with p_prior
-        self.occupancy_grid = np.zeros((
+        self.occupancy_grid_logodds = np.zeros((
             self.grid_size_x, 
             self.grid_size_y
             ))
         
-        self.log_odds_free  = self._prob_to_log_odds(p_free)
-        self.log_odds_occ   = self._prob_to_log_odds(p_occ)
-        self.log_odds_prior = self._prob_to_log_odds(p_prior)
+        self.log_odds_free  = self._prob_to_log_odds(p_free)  # -1.386
+        self.log_odds_occ   = self._prob_to_log_odds(p_occ)   # +1.386
+        self.log_odds_prior = self._prob_to_log_odds(p_prior) # 0.0
     
     def _log_odds_to_prob(self, log_odds):
         return 1 - 1 / (1 + np.exp(log_odds))
@@ -72,8 +72,9 @@ class Lidar(Mapping):
         )
         self.odom = [0., 0., 0.]
 
-    def get_probability_map(self):
-        return super()._log_odds_to_prob(self.occupancy_grid)
+    @property
+    def occupancy_grid(self) -> np.ndarray:
+        return super()._log_odds_to_prob(self.occupancy_grid_logodds)
 
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds):
         diff = hit_pt_inds - obs_pt_inds
@@ -90,11 +91,15 @@ class Lidar(Mapping):
     def update_odom(self, odom_msg):
         x = odom_msg.pose.pose.position.x
         y = odom_msg.pose.pose.position.y
-        w = odom_msg.pose.pose.orientation.w
-        z = odom_msg.pose.pose.orientation.z 
-        t0 = +2.0 * (w * z + x * y)
-        t1 = +1.0 - 2.0 * (y * y + z * z)
-        yaw = np.arctan2(t0, t1)
+
+        rot = R.from_quat([
+            odom_msg.pose.pose.orientation.x,
+            odom_msg.pose.pose.orientation.y,
+            odom_msg.pose.pose.orientation.z,
+            odom_msg.pose.pose.orientation.w
+        ])
+
+        _, _, yaw = rot.as_euler('xyz', degrees=False)
         self.odom = [x, y, yaw]
 
     def update_map(self, lidar_msg):
@@ -116,10 +121,10 @@ class Lidar(Mapping):
             hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
             hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
-            self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
+            self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
 
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
-            self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+            self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
         self.publish()
 
@@ -140,11 +145,12 @@ class Lidar(Mapping):
 
     def publish(self):
         # Conver the map to a 1D array
+        occupancy_grid = self.occupancy_grid.copy()*100
         self.map_update = OccupancyGrid()
         self.map_update.header.frame_id = "occupancy_grid"
         self.map_update.header.stamp = rospy.Time.now()
         self.map_update.info = self.map_init.info
-        self.map_update.data = self.occupancy_grid.flatten().astype(np.int8)
+        self.map_update.data = occupancy_grid.flatten().astype(np.int8)
         # Publish the map
         self.occ_map_pub.publish(self.map_update)
 
@@ -269,16 +275,21 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose) )
+        q = R.from_euler(
+            seq='xyz', 
+            angles=[0., 0., curr_pose.theta()], 
+            degrees=False
+        ).as_quat()
+
         self.current_pose += 1
         pose_msg = Pose()
         pose_msg.position.x = curr_pose.x()
         pose_msg.position.y = curr_pose.y()
         pose_msg.position.z = 0
-        quaternion = tf.transformations.quaternion_from_euler(0,0,curr_pose.theta())
-        pose_msg.orientation.x = quaternion[0]
-        pose_msg.orientation.y = quaternion[1]
-        pose_msg.orientation.z = quaternion[2]
-        pose_msg.orientation.w = quaternion[3]
+        pose_msg.orientation.x = q[0]
+        pose_msg.orientation.y = q[1]
+        pose_msg.orientation.z = q[2]
+        pose_msg.orientation.w = q[3]
         self.pose_pub.publish(pose_msg)
         
     def run(self):
