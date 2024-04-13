@@ -84,7 +84,6 @@ class Lidar(Mapping):
         return np.array([grid_x, grid_y, grid_w])
     
     def update_odom(self, odom_msg):
-        # TODO: Get heading angle using odom.txt as example (DONE)
         x = odom_msg.pose.pose.position.x
         y = odom_msg.pose.pose.position.y
         w = odom_msg.pose.pose.orientation.w
@@ -92,8 +91,7 @@ class Lidar(Mapping):
         t0 = +2.0 * (w * z + x * y)
         t1 = +1.0 - 2.0 * (y * y + z * z)
         yaw = np.arctan2(t0, t1)
-        # TODO: Do we need linear.x and angluar.z 
-        self.odom = [x, y, w]
+        self.odom = [x, y, yaw]
 
     def update_map(self, lidar_msg):
 
@@ -122,8 +120,7 @@ class Lidar(Mapping):
         self.publish()
 
     def publish(self):
-        # TODO: Figure out attributes to pubish map (DONE)
-         # Conver the map to a 1D array
+        # Conver the map to a 1D array
         self.map_update = OccupancyGrid()
         self.map_update.header.frame_id = "occupancy_grid"
         self.map_update.header.stamp = rospy.Time.now()
@@ -137,9 +134,8 @@ class Lidar(Mapping):
         self.map_update.info.origin.orientation.w = 1
         self.map_update.data = self.occupancy_grid.flatten('F')
         self.map_update.data = self.map_update.data.flatten().astype(np.int8)
-        #Publish the map
+        # Publish the map
         self.pub.publish(self.map_update)
-        rospy.loginfo(self.update_map)
 
 
 class GTSAM(Lidar):
@@ -166,7 +162,7 @@ class GTSAM(Lidar):
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name='/turtle_pose',
-            data_class=Pose, # TODO: Figure out dataclass to use for pose
+            data_class=Pose,
             queue_size=10
         )
 
@@ -189,7 +185,6 @@ class GTSAM(Lidar):
         priorFactor = gtsam.PriorFactorPose2(X(self.current_pose), priorMean, self.prior_noise) # TODO: Use appropriate shorthand variables 
         self.graph.add(priorFactor)
         self.initial_estimate.insert(X(self.current_pose), priorMean) # TODO: Use appropriate shorthand variables
-        # self.current_pose += 1 # Publish should take care of this += 1
 
     def add_tag_factors(self, apriltag_msg):
         
@@ -230,7 +225,6 @@ class GTSAM(Lidar):
 
     def add_odem_factors(self):
 
-        # TODO: Use snippets from HW_5, to add odometry factor
         assert self.current_pose >= 1
         odometry = gtsam.Pose2(self.odom)
 
@@ -270,14 +264,15 @@ class GTSAM(Lidar):
         pose_msg.orientation.z = quaternion[2]
         pose_msg.orientation.w = quaternion[3]
         self.pose_pub.publish(pose_msg)
-        # TODO: Publish poses with self.pose_pub.publish(...)(DONE)
         
     def run(self):
         # TODO: Finish this function
 
         rate = rospy.Rate(1)  # 1 Hz
         # Get initial pose
+        # self.current_pose
         # Publish updated pose
+        # self.current_pose += 1
         while not rospy.is_shutdown():
             # add_odem_factors(...)
             # Get msgs from /scan (and publish occupancy map - update_map(...))
@@ -285,6 +280,7 @@ class GTSAM(Lidar):
             # Get msgs from /tag_detections (and add_tag_factors(...))
             # Optimize SLAM graph to get pose
             # Publish updated pose
+            # self.current_pose += 1
             rate.sleep()
 
 if __name__ == '__main__':
