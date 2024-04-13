@@ -6,6 +6,8 @@ from dataclasses import dataclass
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
+from geometry_msgs.msg import Pose
+import tf.transformations
 from apriltag_ros.msg import AprilTagDetectionArray
 
 
@@ -82,9 +84,15 @@ class Lidar(Mapping):
         return np.array([grid_x, grid_y, grid_w])
     
     def update_odom(self, odom_msg):
+        # TODO: Get heading angle using odom.txt as example (DONE)
         x = odom_msg.pose.pose.position.x
         y = odom_msg.pose.pose.position.y
-        w = odom_msg.pose.pose.orientation # TODO: Get heading angle using odom.txt as example
+        w = odom_msg.pose.pose.orientation.w
+        z = odom_msg.pose.pose.orientation.z 
+        t0 = +2.0 * (w * z + x * y)
+        t1 = +1.0 - 2.0 * (y * y + z * z)
+        yaw = np.arctan2(t0, t1)
+        # TODO: Do we need linear.x and angluar.z 
         self.odom = [x, y, w]
 
     def update_map(self, lidar_msg):
@@ -114,18 +122,24 @@ class Lidar(Mapping):
         self.publish()
 
     def publish(self):
-
-        # TODO: Figure out attributes to pubish map
+        # TODO: Figure out attributes to pubish map (DONE)
          # Conver the map to a 1D array
         self.map_update = OccupancyGrid()
         self.map_update.header.frame_id = "occupancy_grid"
         self.map_update.header.stamp = rospy.Time.now()
-        # self.map_update.info = self.map_laser.info
-        # self.map_update.data = self.laser_arr.flatten('F')
-        # # Convert the map to type int8
-        # self.map_update.data = self.map_update.data.astype(np.int8)
-        # # Publish the map
-        # self.pub.publish(self.map_update)
+        self.map_update.info.width = self.grid_size_x
+        self.map_update.info.height = self.grid_size_y
+        self.map_update.info.origin.position.x = self.grid_origin_x
+        self.map_update.info.origin.position.y = self.grid_origin_y
+        self.map_update.info.origin.orientation.x = 0
+        self.map_update.info.origin.orientation.y = 0
+        self.map_update.info.origin.orientation.z = 0
+        self.map_update.info.origin.orientation.w = 1
+        self.map_update.data = self.occupancy_grid.flatten('F')
+        self.map_update.data = self.map_update.data.flatten().astype(np.int8)
+        #Publish the map
+        self.pub.publish(self.map_update)
+        rospy.loginfo(self.update_map)
 
 
 class GTSAM(Lidar):
@@ -149,11 +163,10 @@ class GTSAM(Lidar):
             data_class=AprilTagDetectionArray, 
             callback=self.add_tag_factors
         )
-
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name='/turtle_pose',
-            dataclass=None, # TODO: Figure out dataclass to use for pose
+            dataclass=Pose, # TODO: Figure out dataclass to use for pose from geometry_msgs import Pose()
             queue_size=10
         )
 
@@ -246,8 +259,18 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose) )
-        self.current_pose += 1
-        # TODO: Publish poses with self.pose_pub.publish(...)
+        self.current_pose += 1 # Why do we need +1?
+        pose_msg = Pose()
+        pose_msg.position.x = curr_pose.x()
+        pose_msg.position.y = curr_pose.y()
+        pose_msg.position.z = 0
+        quaternion = tf.transformations.quaternion_from_euler(0,0,curr_pose.theta())
+        pose_msg.orientation.x = quaternion[0]
+        pose_msg.orientation.y = quaternion[1]
+        pose_msg.orientation.z = quaternion[2]
+        pose_msg.orientation.w = quaternion[3]
+        self.pose_pub.publish(pose_msg)
+        # TODO: Publish poses with self.pose_pub.publish(...)(DONE)
         
     def run(self):
         # TODO: Finish this function
