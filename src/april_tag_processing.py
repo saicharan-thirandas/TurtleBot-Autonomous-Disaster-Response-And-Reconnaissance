@@ -11,39 +11,14 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
 
+from image_processing import draw_bbox
+
 
 # TODO: Confirm these; i.e. perform camera calibration
 FX = 2.68e3
 FY = 2.49e3
 CX = 1.64e3
 CY = 1.21e3
-
-
-def draw_bbox(image, corners, center, tag_fam):
-
-    (ptA, ptB, ptC, ptD) = corners
-
-    ptB = (int(ptB[0]), int(ptB[1]))
-    ptC = (int(ptC[0]), int(ptC[1]))
-    ptD = (int(ptD[0]), int(ptD[1]))
-    ptA = (int(ptA[0]), int(ptA[1]))
-
-    cv2.line(image, ptA, ptB, (0, 255, 0), 2)
-    cv2.line(image, ptB, ptC, (0, 255, 0), 2)
-    cv2.line(image, ptC, ptD, (0, 255, 0), 2)
-    cv2.line(image, ptD, ptA, (0, 255, 0), 2)
-
-    (cX, cY) = (int(center[0]), int(center[1]))
-    cv2.circle(image, (cX, cY), 5, (0, 0, 255), -1)
-    cv2.putText(
-        image, 
-        tag_fam, 
-        (ptA[0], ptA[1] - 15), 
-        cv2.FONT_HERSHEY_SIMPLEX, 
-        0.5, 
-        (0, 255, 0), 
-        2
-    )
 
 
 class AprilTagDetector():
