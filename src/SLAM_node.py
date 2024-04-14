@@ -11,6 +11,8 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 
+from transformation_utils import get_quat_pose, get_matrix_pose_from_quat
+
 
 @dataclass
 class Grid:
@@ -98,18 +100,8 @@ class Lidar(Mapping):
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
     
     def update_odom(self, odom_msg):
-        x = odom_msg.pose.pose.position.x
-        y = odom_msg.pose.pose.position.y
-
-        rot = R.from_quat([
-            odom_msg.pose.pose.orientation.x,
-            odom_msg.pose.pose.orientation.y,
-            odom_msg.pose.pose.orientation.z,
-            odom_msg.pose.pose.orientation.w
-        ])
-
-        _, _, yaw = rot.as_euler('xyz', degrees=False)
-        self.odom = [x, y, yaw]
+        odom = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
+        self.odom = odom
 
     def update_map(self, lidar_msg):
 
@@ -143,14 +135,14 @@ class Lidar(Mapping):
             input_grid=super()._log_odds_to_prob(
                 log_odds=self.occupancy_grid_logodds
                 ) * 100, 
-            frame_id='occupancy_grid'
+            cam_pov=False
         )
         
         self.publish(
             input_grid=super()._log_odds_to_prob(
                 log_odds=self.occupancy_grid_logodds_cam
                 ) * 100,
-            frame_id='occupancy_grid_camera'
+            cam_pov=True
         )
 
     def _init_map(self):
@@ -177,18 +169,18 @@ class Lidar(Mapping):
         map_init.data = input_grid.flatten().astype(np.int8)
         return map_init
 
-    def publish(self, input_grid: np.ndarray, frame_id='occupancy_grid'):
+    def publish(self, input_grid: np.ndarray, cam_pov=False):
 
         # Conver the map to a 1D array
         map_update = OccupancyGrid()
         map_update.info = self.map_init.info
-        map_update.header.frame_id = frame_id
+        map_update.header.frame_id = 'occupancy_grid_camera' if cam_pov else 'occupancy_grid'
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
-        if frame_id=='occupancy_grid':
+        if cam_pov:
             self.occ_map_pub.publish(map_update)
-        elif frame_id=='occupancy_grid_camera':
+        else:
             self.occ_map_pub_cam.publish(map_update)
 
 
@@ -312,22 +304,9 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose) )
-        q = R.from_euler(
-            seq='xyz', 
-            angles=[0., 0., curr_pose.theta()], 
-            degrees=False
-        ).as_quat()
-
-        self.current_pose += 1
-        pose_msg = Pose()
-        pose_msg.position.x = curr_pose.x()
-        pose_msg.position.y = curr_pose.y()
-        pose_msg.position.z = 0
-        pose_msg.orientation.x = q[0]
-        pose_msg.orientation.y = q[1]
-        pose_msg.orientation.z = q[2]
-        pose_msg.orientation.w = q[3]
+        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta())
         self.pose_pub.publish(pose_msg)
+        self.current_pose += 1
         
     def run(self):
 

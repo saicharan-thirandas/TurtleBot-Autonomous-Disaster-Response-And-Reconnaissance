@@ -12,6 +12,7 @@ from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
 from image_processing import draw_image
+from transformation_utils import T_RC, T_CR, get_matrix_pose_from_quat
 from SLAM_node import Mapping
 
 class AprilTagTracker(Mapping):
@@ -22,7 +23,10 @@ class AprilTagTracker(Mapping):
         self.image  = np.zeros_like(self.occupancy_grid_logodds)
         self.bridge = CvBridge()
 
-        # Subscribe to SLAM topic
+        self.T_OR = np.eye(4)
+        self.T_RO = np.eye(4)
+
+        # Subscribe to SLAM topic and update self.T_OR and self.T_RO
         self.tag_sub = rospy.Subscriber(
             name='/turtle_pose',
             data_class=Pose,
@@ -38,7 +42,12 @@ class AprilTagTracker(Mapping):
             queue_size=10
         )
 
-        # TODO: Subscribe to occupancy grid
+        self.map_sub = rospy.Subscriber(
+            name='/occupancy_map', 
+            data_class=OccupancyGrid, 
+            callback=self.map_callback,
+            queue_size=10
+        )
 
         # Publish tracked AprilTag poses
         self.tag_track_pub = rospy.Publisher(
@@ -57,17 +66,6 @@ class AprilTagTracker(Mapping):
         self.unique_tags = {}
         self.xy_to_ids   = {}
         self.current_id  = 0
-
-        self.T_OR = np.eye(4)
-        self.T_RO = np.eye(4)
-
-        self.T_RC = np.array([[1., 0., 0., 0.], # TODO: Get Camera's frame w.r.t. Robot's base
-                              [0., 1., 0., 0.], 
-                              [0., 0., 1., 0.],  
-                              [0., 0., 0., 1.]])
-        self.T_CR = np.eye(4)
-        self.T_CR[:3, :3] = self.T_RC.T
-        self.T_CR[:3, -1] = -(self.T_RC.T) @ np.array(self.T_RC[:3, -1])
 
     def turtle_pose_update(self, turtle_pose_msg):
         
@@ -93,21 +91,8 @@ class AprilTagTracker(Mapping):
         
         for tag_detection in tag_detections.detections:
             tag_pose = tag_detection.pose.pose.pose
-
-            t = [tag_pose.position.x, 
-                 tag_pose.position.y, 
-                 tag_pose.position.z]
-
-            q = [tag_pose.orientation.x, 
-                 tag_pose.orientation.y, 
-                 tag_pose.orientation.z, 
-                 tag_pose.orientation.w]
-            r = R.from_quat(q).as_matrix()
-
-            T_CA = np.eye(4)
-            T_CA[:3, :3] = r
-            T_CA[:3, -1] = np.array(t)
-            T_OA = self.T_OR @ self.T_RC @ T_CA
+            T_CA = get_matrix_pose_from_quat(tag_pose)
+            T_OA = self.T_OR @ T_RC @ T_CA
 
             occ_x, occ_y, _  = super()._coords_to_grid_indicies(T_OA[0, -1], T_OA[1, -1], 0)
             occ_map_location = (occ_x, occ_y)
@@ -124,7 +109,7 @@ class AprilTagTracker(Mapping):
         for unique_xy, T_OA_tag in self.unique_tags.items():
             tag = AprilTagDetection()
 
-            T_CA = self.T_CR @ self.T_RO @ T_OA_tag                
+            T_CA = T_CR @ self.T_RO @ T_OA_tag                
             q = R.from_matrix(T_CA[:3, :3]).as_quat()
             t = T_CA[:3, -1]
 
