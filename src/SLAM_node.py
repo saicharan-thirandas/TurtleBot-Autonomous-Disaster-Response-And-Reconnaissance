@@ -23,25 +23,30 @@ class Grid:
 
 class Mapping(Grid):
     def __init__(self, 
-                 p_free: float=0.2, 
-                 p_occ: float=0.8, 
+                 p_free: float=0.1,
+                 p_occ: float=1.0, 
                  p_prior: float=0.5):
         
         # Initialize occupancy grid with p_prior
         self.occupancy_grid_logodds = np.zeros((
             self.grid_size_x, 
             self.grid_size_y
-            ))
-        
-        self.log_odds_free  = self._prob_to_log_odds(p_free)  # -1.386
-        self.log_odds_occ   = self._prob_to_log_odds(p_occ)   # +1.386
-        self.log_odds_prior = self._prob_to_log_odds(p_prior) # 0.0
-    
-    def _log_odds_to_prob(self, log_odds):
-        return 1 - 1 / (1 + np.exp(log_odds))
+        ))
 
-    def _prob_to_log_odds(self, prob):
-        return np.log(prob / (1 - prob))
+        self.occupancy_grid_logodds_cam = np.zeros((
+            self.grid_size_x, 
+            self.grid_size_y
+        ))
+        
+        self.log_odds_free  = self._prob_to_log_odds(p_free)
+        self.log_odds_occ   = self._prob_to_log_odds(p_occ)
+        self.log_odds_prior = self._prob_to_log_odds(p_prior)
+    
+    def _log_odds_to_prob(self, log_odds: np.ndarray) -> np.ndarray:
+        return 1 - 1 / (1e-6 + 1 + np.exp(log_odds))
+
+    def _prob_to_log_odds(self, prob: np.ndarray) -> np.ndarray:
+        return np.log(prob / (1e-6 + 1 - prob))
 
 
 class Lidar(Mapping):
@@ -49,6 +54,21 @@ class Lidar(Mapping):
     def __init__(self):
 
         super(Lidar, self).__init__()
+        self._init_map()
+        self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
+
+        self.occ_map_pub = rospy.Publisher(
+            name='/occupancy_map',
+            data_class=OccupancyGrid,
+            queue_size=10
+        )
+
+        self.occ_map_pub_cam = rospy.Publisher(
+            name='/occupancy_map_camera',
+            data_class=OccupancyGrid,
+            queue_size=10
+        )
+
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
             name='/odom', 
@@ -63,18 +83,7 @@ class Lidar(Mapping):
             callback=self.update_map
         )
 
-        # Publish processed occupancy map
-        self._init_occupancy_map()
-        self.occ_map_pub = rospy.Publisher(
-            name='/occupancy_map',
-            data_class=OccupancyGrid,
-            queue_size=10
-        )
         self.odom = [0., 0., 0.]
-
-    @property
-    def occupancy_grid(self) -> np.ndarray:
-        return super()._log_odds_to_prob(self.occupancy_grid_logodds)
 
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds):
         diff = hit_pt_inds - obs_pt_inds
@@ -82,9 +91,9 @@ class Lidar(Mapping):
         D = np.abs( diff[j] )
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
 
-    def _coords_to_grid_indicies(self, x, y, w):
-        grid_x = int((x - self.grid_origin_x) / self.grid_resolution)
-        grid_y = int((y - self.grid_origin_y) / self.grid_resolution)
+    def _coords_to_grid_indicies(self, x, y, w, sign=1):
+        grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
+        grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
         grid_w = int(w / self.grid_resolution)
         return np.array([grid_x, grid_y, grid_w])
     
@@ -106,53 +115,81 @@ class Lidar(Mapping):
 
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = self.odom
-        obs_pt_inds = self._coords_to_grid_indicies(x, y, w)
+        obs_pt_inds = self._coords_to_grid_indicies(x, y, w, sign=1)
 
         for i in range(len(ranges)):
             # Get angle of range
             angle_rad = i * lidar_msg.angle_increment
+            beam_angle_rad = w + angle_rad
 
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
                 continue
 
             # Get x,y position of laser beam in the map
-            beam_angle_rad = w + angle_rad
             hit_x = x + np.cos(beam_angle_rad) * ranges[i]
             hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
             hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
-            self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+
+            self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
             self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
-        self.publish()
+            if self.in_cam_pov(angle_rad):
+                self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
+                self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
-    def _init_occupancy_map(self):
+        self.publish(
+            input_grid=super()._log_odds_to_prob(
+                log_odds=self.occupancy_grid_logodds
+                ) * 100, 
+            frame_id='occupancy_grid'
+        )
+        
+        self.publish(
+            input_grid=super()._log_odds_to_prob(
+                log_odds=self.occupancy_grid_logodds_cam
+                ) * 100,
+            frame_id='occupancy_grid_camera'
+        )
 
-        self.map_init = OccupancyGrid()
-        self.map_init.info.width = self.grid_size_x
-        self.map_init.info.height = self.grid_size_y
-        self.map_init.info.resolution = self.grid_resolution
-        self.map_init.info.origin.position.x = self.grid_origin_x
-        self.map_init.info.origin.position.y = self.grid_origin_y
-        self.map_init.info.origin.position.z = 0
-        self.map_init.info.origin.orientation.x = 0
-        self.map_init.info.origin.orientation.y = 0
-        self.map_init.info.origin.orientation.z = 0
-        self.map_init.info.origin.orientation.w = 1
-        self.map_init.data = self.occupancy_grid.flatten().astype(np.int8)
+    def _init_map(self):
 
-    def publish(self):
+        self.map_init = self._init_occupancy_map(
+            input_grid=super()._log_odds_to_prob(
+                log_odds=self.occupancy_grid_logodds
+            ) * 100
+        )
+
+    def _init_occupancy_map(self, input_grid: np.ndarray):
+
+        map_init = OccupancyGrid()
+        map_init.info.width  = self.grid_size_x
+        map_init.info.height = self.grid_size_y
+        map_init.info.resolution = self.grid_resolution
+        map_init.info.origin.position.x = self.grid_origin_x
+        map_init.info.origin.position.y = self.grid_origin_y
+        map_init.info.origin.position.z = 0
+        map_init.info.origin.orientation.x = 0
+        map_init.info.origin.orientation.y = 0
+        map_init.info.origin.orientation.z = 0
+        map_init.info.origin.orientation.w = 1
+        map_init.data = input_grid.flatten().astype(np.int8)
+        return map_init
+
+    def publish(self, input_grid: np.ndarray, frame_id='occupancy_grid'):
+
         # Conver the map to a 1D array
-        occupancy_grid = self.occupancy_grid.copy()*100
-        self.map_update = OccupancyGrid()
-        self.map_update.header.frame_id = "occupancy_grid"
-        self.map_update.header.stamp = rospy.Time.now()
-        self.map_update.info = self.map_init.info
-        self.map_update.data = occupancy_grid.flatten().astype(np.int8)
+        map_update = OccupancyGrid()
+        map_update.info = self.map_init.info
+        map_update.header.frame_id = frame_id
+        map_update.header.stamp = rospy.Time.now()
+        map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
-        self.occ_map_pub.publish(self.map_update)
+        if frame_id=='occupancy_grid':
+            self.occ_map_pub.publish(map_update)
+        elif frame_id=='occupancy_grid_camera':
+            self.occ_map_pub_cam.publish(map_update)
 
 
 class GTSAM(Lidar):
@@ -299,9 +336,7 @@ class GTSAM(Lidar):
         self.publish_poses(result)
         while not rospy.is_shutdown():
             self.add_odem_factors()
-            # Get msgs from /scan (and publish occupancy map - update_map(...))
             # add_grid_factors(...)?
-            # Get msgs from /tag_detections (and add_tag_factors(...))
             result, _ = self.optimize()
             self.publish_poses(result)
             rate.sleep()

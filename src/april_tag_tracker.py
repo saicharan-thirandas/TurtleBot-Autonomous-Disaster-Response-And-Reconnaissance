@@ -6,9 +6,7 @@ import numpy as np
 
 import rospy
 from apriltag_ros.msg import AprilTagDetectionArray, AprilTagDetection
-from pupil_apriltags import Detector
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
+from geometry_msgs.msg import Pose
 
 
 class AprilTagTracker():
@@ -19,7 +17,7 @@ class AprilTagTracker():
         # Subscribe to SLAM topic
         self.tag_sub = rospy.Subscriber(
             name='/turtle_pose',
-            data_class=None, # TODO: Use appropriate format
+            data_class=Pose,
             callback=self.turtle_pose_update,
             queue_size=10
         )
@@ -39,9 +37,6 @@ class AprilTagTracker():
             queue_size=10
         )
 
-        self.tag_tracker = {}
-        self.tag_dets_CA = {}
-
         self.T_OR = np.eye(4)
         self.T_RO = np.eye(4)
 
@@ -56,15 +51,14 @@ class AprilTagTracker():
     def turtle_pose_update(self, turtle_pose_msg):
         
         # SLAM output will be T_OR. Or Robot w.r.t. to Origin
-        turtle_pose = turtle_pose_msg.pose.pose.pose
-        t = [turtle_pose.position.x, 
-             turtle_pose.position.y, 
-             turtle_pose.position.z]
+        t = [turtle_pose_msg.position.x, 
+             turtle_pose_msg.position.y, 
+             turtle_pose_msg.position.z]
 
-        q = [turtle_pose.orientation.x, 
-             turtle_pose.orientation.y, 
-             turtle_pose.orientation.z, 
-             turtle_pose.orientation.w]
+        q = [turtle_pose_msg.orientation.x, 
+             turtle_pose_msg.orientation.y, 
+             turtle_pose_msg.orientation.z, 
+             turtle_pose_msg.orientation.w]
         r = R.from_quat(q).as_matrix()
 
         self.T_OR[:3, :3] = r
@@ -76,13 +70,8 @@ class AprilTagTracker():
 
     def tag_update_callback(self, tag_detections):
         
-        in_camera = []
         for tag_detection in tag_detections.detections:
-            tag = AprilTagDetection()
-
-            tag_id   = tag_detection.id[0]
             tag_pose = tag_detection.pose.pose.pose
-            in_camera.append(tag_id)
 
             t = [tag_pose.position.x, 
                  tag_pose.position.y, 
@@ -98,30 +87,30 @@ class AprilTagTracker():
             T_CA[:3, -1] = np.array(t)
 
             T_OA = self.T_OR @ self.T_RC @ T_CA
-            self.tag_tracker[tag_id] = T_OA
-            self.tag_dets_CA[tag_id] = T_CA
+            # self.update_goal_pub.publish()
         
         # Publish all tracked tags and their T_CA poses
         tag_msg = AprilTagDetectionArray()
         tag_msg.header = tag_detections.header
-        for tag_id, T_OA_tag in self.tag_tracker.items():
-            if tag_id in in_camera:
-                T_CA = self.tag_dets_CA[tag_id]
-            else:
-                T_CA = self.T_CR @ self.T_RO @ T_OA_tag
-                
-            q = R.from_matrix(T_CA[:3, :3]).as_quat()
-            t = T_CA[:3, -1]
 
-            tag.id = tag_id
-            tag.pose.pose.pose.position.x = t[0]
-            tag.pose.pose.pose.position.y = t[1]
-            tag.pose.pose.pose.position.z = t[2]
-            tag.pose.pose.pose.orientation.x = q[0]
-            tag.pose.pose.pose.orientation.y = q[1]
-            tag.pose.pose.pose.orientation.z = q[2]
-            tag.pose.pose.pose.orientation.w = q[3]
-            tag_msg.detections.append(tag)
+        # ---------------------------------------- #
+        # for tag_id, T_OA_tag in :
+        #     tag = AprilTagDetection()
+        #     T_CA = self.T_CR @ self.T_RO @ T_OA_tag
+                
+        #     q = R.from_matrix(T_CA[:3, :3]).as_quat()
+        #     t = T_CA[:3, -1]
+
+        #     tag.id = tag_id
+        #     tag.pose.pose.pose.position.x = t[0]
+        #     tag.pose.pose.pose.position.y = t[1]
+        #     tag.pose.pose.pose.position.z = t[2]
+        #     tag.pose.pose.pose.orientation.x = q[0]
+        #     tag.pose.pose.pose.orientation.y = q[1]
+        #     tag.pose.pose.pose.orientation.z = q[2]
+        #     tag.pose.pose.pose.orientation.w = q[3]
+        #     tag_msg.detections.append(tag)
+        # ---------------------------------------- #
 
         self.tag_track_pub.publish(tag_msg)
 
