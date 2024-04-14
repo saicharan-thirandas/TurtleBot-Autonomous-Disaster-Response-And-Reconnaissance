@@ -53,8 +53,13 @@ class Mapping(Grid):
     def _coords_to_grid_indicies(self, x, y, w, sign=1):
         grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
         grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
-        grid_w = int(w / self.grid_resolution)
-        return np.array([grid_x, grid_y, grid_w])
+        #grid_w = int(w / self.grid_resolution)
+        return np.array([grid_x, grid_y, w])
+
+    def _grid_indices_to_coords(self, grid_x, grid_y, w, sign=1):
+        x = grid_x * self.grid_resolution - sign * self.grid_origin_x
+        y = grid_y * self.grid_resolution - sign * self.grid_origin_y
+        return x, y, w
 
 
 class Lidar(Mapping):

@@ -51,3 +51,15 @@ def get_quat_pose(x, y, yaw):
     pose_msg.orientation.z = q[2]
     pose_msg.orientation.w = q[3]
     return pose_msg
+
+
+
+def calculate_yaw(x_target, y_target, x_source, y_source):
+    # Calculate the difference in x and y coordinates
+    dx = x_target - x_source
+    dy = y_target - y_source
+    
+    # Calculate the yaw using arctan2
+    yaw = np.arctan2(dy, dx)
+    
+    return yaw
