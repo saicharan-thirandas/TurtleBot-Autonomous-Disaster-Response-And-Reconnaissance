@@ -48,6 +48,12 @@ class Mapping(Grid):
     def _prob_to_log_odds(self, prob: np.ndarray) -> np.ndarray:
         return np.log(prob / (1e-6 + 1 - prob))
 
+    def _coords_to_grid_indicies(self, x, y, w, sign=1):
+        grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
+        grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
+        grid_w = int(w / self.grid_resolution)
+        return np.array([grid_x, grid_y, grid_w])
+
 
 class Lidar(Mapping):
 
@@ -90,12 +96,6 @@ class Lidar(Mapping):
         j = np.argmax( np.abs(diff) )
         D = np.abs( diff[j] )
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
-
-    def _coords_to_grid_indicies(self, x, y, w, sign=1):
-        grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
-        grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
-        grid_w = int(w / self.grid_resolution)
-        return np.array([grid_x, grid_y, grid_w])
     
     def update_odom(self, odom_msg):
         x = odom_msg.pose.pose.position.x
@@ -115,7 +115,7 @@ class Lidar(Mapping):
 
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = self.odom
-        obs_pt_inds = self._coords_to_grid_indicies(x, y, w, sign=1)
+        obs_pt_inds = super()._coords_to_grid_indicies(x, y, w, sign=1)
 
         for i in range(len(ranges)):
             # Get angle of range
@@ -129,7 +129,7 @@ class Lidar(Mapping):
             hit_x = x + np.cos(beam_angle_rad) * ranges[i]
             hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
-            hit_pt_inds  = self._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
+            hit_pt_inds  = super()._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
 
             self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
