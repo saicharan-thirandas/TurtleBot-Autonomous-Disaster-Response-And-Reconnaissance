@@ -34,12 +34,7 @@ class MPPIRacetrack:
         #         [-3.0, 0.0],
         #     ]
         # )
-        self.waypoints = np.array(
-            [
-                [1.0, -1.5]
-            ]
-        )
-        self.current_waypoint_index = 0
+        self.waypoint = None
 
         self.cmap = plt.get_cmap("winter_r")
 
@@ -50,14 +45,8 @@ class MPPIRacetrack:
         self.nominal_actions[:, 0] = 1.0
 
     def score_rollouts(self, rollouts, actions):
-        goal_pos = self.waypoints[
-            self.current_waypoint_index % self.waypoints.shape[0]
-        ]
+        goal_pos = self.waypoint
         speed_scores = np.linalg.norm(goal_pos - rollouts[:, -1, 0:2], axis=1)
-
-        if np.min(speed_scores) < 0.5:
-            self.current_waypoint_index += 1
-            # print(f'move to next waypoint: {self.current_waypoint_index}, {self.waypoints[self.current_waypoint_index]}')
 
         rollouts_in_G, in_map = (
             self.static_map.world_coordinates_to_map_indices(

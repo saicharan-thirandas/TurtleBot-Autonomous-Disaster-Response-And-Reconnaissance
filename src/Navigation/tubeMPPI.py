@@ -10,7 +10,7 @@ class TubeMPPIRacetrack:
         self.static_map = static_map
         self.nominal = MPPIRacetrack(static_map=static_map, num_steps_per_rollout=num_timesteps)
         self.ancillary = AncillaryILQG(static_map=static_map, K=num_timesteps)
-        self.motion_model = MotionModel()
+        self.motion_model = Unicycle()
         self.z = None
 
     def simulate(self, x0, u):
@@ -28,9 +28,11 @@ class TubeMPPIRacetrack:
         z_traj = self.simulate(self.z, v)
         return z_traj, v
 
-    def get_action(self, x0):
+    def get_action(self, x0, waypoint):
         if self.z is None:
             self.z = x0
+        self.nominal.waypoint = np.array(waypoint).reshape((1, -1))
+        self.ancillary.waypoint = np.array(waypoint).reshape((1, -1))
         z_traj, v = self.solve_nominal()
         self.ancillary.nominal_states = z_traj
         self.ancillary.nominal_actions = v
