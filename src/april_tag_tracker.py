@@ -140,8 +140,8 @@ class AprilTagTracker(Mapping):
                 grid_pose, 
                 xy_to_ids
             )
-            rospy.loginfo(f"GRID POSE: {grid_pose}")
-            rospy.loginfo(f"XY to IDS: {xy_to_ids}")
+            # rospy.loginfo(f"GRID POSE: {grid_pose}")
+            # rospy.loginfo(f"XY to IDS: {xy_to_ids}")
             self.viz_traj_pub.publish(self.bridge.cv2_to_imgmsg(self.image.astype(np.uint8)))
             rate.sleep()
 

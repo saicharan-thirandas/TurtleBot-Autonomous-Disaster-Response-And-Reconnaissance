@@ -23,7 +23,15 @@ class Lidar(Mapping):
 
         super(Lidar, self).__init__()
         self._init_map()
+        self.odom = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
+
+        # Subscribe to odometry
+        self.lidar_sub = rospy.Subscriber(
+            name='/odom', 
+            data_class=Odometry, 
+            callback=self.update_odom
+        )
 
         self.occ_map_pub = rospy.Publisher(
             name='/occupancy_map',
@@ -37,21 +45,12 @@ class Lidar(Mapping):
             queue_size=10
         )
 
-        # Subscribe to odometry
-        self.lidar_sub = rospy.Subscriber(
-            name='/odom', 
-            data_class=Odometry, 
-            callback=self.update_odom
-        )
-
         # Subscribe to the lidar messages
         self.lidar_sub = rospy.Subscriber(
             name='/scan', 
             data_class=LaserScan, 
             callback=self.update_map
         )
-
-        self.odom = [0., 0., 0.]
 
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
@@ -60,14 +59,17 @@ class Lidar(Mapping):
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
     
     def update_odom(self, odom_msg):
-        odom = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
-        rospy.loginfo(f"CURR ODOM: {odom}")
-        self.odom = odom
+        self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
+        twist_msg = odom_msg.twist.twist
+        dx = twist_msg.linear.x
+        dy = twist_msg.linear.y
+        dw = twist_msg.angular.z
+        self.odom = [dx, dy, dw]
 
     def update_map(self, lidar_msg):
 
         ranges = np.asarray(lidar_msg.ranges)
-        x, y, w = self.odom
+        x, y, w = list(self.current_pose)
         obs_pt_inds = super()._coords_to_grid_indicies(x, y, w, sign=1)
 
         for i in range(len(ranges)):
@@ -183,9 +185,7 @@ class GTSAM(Lidar):
 
         # Create an initial estimate for the robot's pose (e.g., based on odometry)
         self.initial_estimate = gtsam.Values()
-        self.current_pose = 0
-
-        self._initialize_graph()
+        self.current_pose_idx = 0
 
         # Subscribe to the detected tags
         self.landmark_set = set()
@@ -197,15 +197,17 @@ class GTSAM(Lidar):
 
     def _initialize_graph(self):
 
-        assert self.current_pose == 0
-        priorMean   = gtsam.Pose2(0.0, 0.0, 0.0)
-        priorFactor = gtsam.PriorFactorPose2(X(self.current_pose), priorMean, self.prior_noise)
+        assert self.current_pose_idx == 0
+        priorMean   = gtsam.Pose2(*self.current_pose)
+        priorFactor = gtsam.PriorFactorPose2(X(self.current_pose_idx), priorMean, self.prior_noise)
         self.graph.add(priorFactor)
-        self.initial_estimate.insert(X(self.current_pose), priorMean)
+        self.initial_estimate.insert(X(self.current_pose_idx), priorMean)
 
     def add_tag_factors(self, apriltag_msg):
         
+        added_factors = False
         for detection in apriltag_msg.detections:
+            added_factors = True
             tag_id = detection.id[0]
 
             if tag_id not in self.landmark_set:
@@ -216,7 +218,8 @@ class GTSAM(Lidar):
                                         detection.pose.pose.pose.position.y,
                                         detection.pose.pose.pose.orientation.z)
 
-            self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose), L(tag_id), relative_pose, self.apriltag_noise))
+            self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose_idx), L(tag_id), relative_pose, self.apriltag_noise))
+        rospy.loginfo(f"ADDED TAG FACTORS: {added_factors}")
 
     def add_grid_factors(self):
 
@@ -240,18 +243,20 @@ class GTSAM(Lidar):
 
     def add_odem_factors(self):
 
-        assert self.current_pose >= 1
-        odometry = gtsam.Pose2(self.odom)
+        assert self.current_pose_idx >= 1
+        rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {self.odom}")
+        odometry = gtsam.Pose2(*tuple(self.odom))
 
         self.initial_estimate.insert(
-            X(self.current_pose), 
-            self.initial_estimate.atPose2( X(self.current_pose-1) ).compose(odometry)
+            X(self.current_pose_idx), 
+            self.initial_estimate.atPose2( X(self.current_pose_idx-1) ).compose(odometry)
         )
 
+        rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
         self.graph.add(
             gtsam.BetweenFactorPose2(
-                X(self.current_pose-1), 
-                X(self.current_pose), 
+                X(self.current_pose_idx-1), 
+                X(self.current_pose_idx), 
                 odometry, 
                 self.odometry_noise
             )
@@ -267,14 +272,16 @@ class GTSAM(Lidar):
     
     def publish_poses(self, result):
 
-        curr_pose = result.atPose2( X(self.current_pose) )
+        curr_pose = result.atPose2( X(self.current_pose_idx) )
+        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
         pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta())
         self.pose_pub.publish(pose_msg)
-        self.current_pose += 1
+        self.current_pose_idx += 1
         
     def run(self):
 
         rate = rospy.Rate(1)  # 1 Hz
+        self._initialize_graph()
         result, _ = self.optimize()
         self.publish_poses(result)
         while not rospy.is_shutdown():
