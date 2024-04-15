@@ -7,7 +7,7 @@ import numpy as np
 import rospy
 from apriltag_ros.msg import AprilTagDetectionArray, AprilTagDetection
 from nav_msgs.msg import Odometry, OccupancyGrid
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, PoseStamped
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
@@ -51,7 +51,7 @@ class AprilTagTracker(Mapping):
         # Subscribe to SLAM topic and update self.T_OR and self.T_RO
         self.turtle_sub = rospy.Subscriber(
             name='/turtle_pose',
-            data_class=Pose,
+            data_class=PoseStamped,
             callback=self.turtle_pose_update,
             queue_size=10
         )

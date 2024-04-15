@@ -6,7 +6,7 @@ import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, PoseStamped
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 
@@ -23,7 +23,7 @@ class Lidar(Mapping):
 
         super(Lidar, self).__init__()
         self._init_map()
-        self.odom = [0., 0., 0.]
+        self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
 
         # Subscribe to odometry
@@ -61,10 +61,9 @@ class Lidar(Mapping):
     def update_odom(self, odom_msg):
         self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
         twist_msg = odom_msg.twist.twist
-        dx = twist_msg.linear.x
-        dy = twist_msg.linear.y
-        dw = twist_msg.angular.z
-        self.odom = [dx, dy, dw]
+        self.dx += twist_msg.linear.x
+        self.dy += twist_msg.linear.y
+        self.dw += twist_msg.angular.z
 
     def update_map(self, lidar_msg):
 
@@ -173,7 +172,7 @@ class GTSAM(Lidar):
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name='/turtle_pose',
-            data_class=Pose,
+            data_class=PoseStamped,
             queue_size=10
         )
 
@@ -198,7 +197,7 @@ class GTSAM(Lidar):
     def _initialize_graph(self):
 
         assert self.current_pose_idx == 0
-        priorMean   = gtsam.Pose2(*self.current_pose)
+        priorMean   = gtsam.Pose2(*self.current_pose) if hasattr(self, 'current_pose') else gtsam.Pose2(0., 0., 0.)
         priorFactor = gtsam.PriorFactorPose2(X(self.current_pose_idx), priorMean, self.prior_noise)
         self.graph.add(priorFactor)
         self.initial_estimate.insert(X(self.current_pose_idx), priorMean)
@@ -244,8 +243,8 @@ class GTSAM(Lidar):
     def add_odem_factors(self):
 
         assert self.current_pose_idx >= 1
-        rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {self.odom}")
-        odometry = gtsam.Pose2(*tuple(self.odom))
+        rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
+        odometry = gtsam.Pose2(self.dx, self.dy, self.dw)
 
         self.initial_estimate.insert(
             X(self.current_pose_idx), 
@@ -261,6 +260,7 @@ class GTSAM(Lidar):
                 self.odometry_noise
             )
         )
+        self.dx, self.dy, self.dw = [0., 0., 0.]
 
     def optimize(self):
 
@@ -273,10 +273,10 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose_idx) )
-        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
-        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta())
+        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=True)
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
+        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
         
     def run(self):
 

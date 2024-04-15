@@ -1,6 +1,7 @@
 import numpy as np
 from scipy.spatial.transform import Rotation as R
-from geometry_msgs.msg import Pose
+from geometry_msgs.msg import Pose, PoseStamped
+import rospy
 
 T_RC = np.array([[1., 0., 0., 0.], # TODO: Get Camera's frame w.r.t. Robot's base
                  [0., 1., 0., 0.], 
@@ -33,9 +34,9 @@ def get_matrix_pose_from_quat(pose, return_matrix=True):
     T[:3, -1] = np.array(t)
     return T
 
-def get_quat_pose(x, y, yaw):
+def get_quat_pose(x, y, yaw, stamped=False):
     
-    pose_msg = Pose()
+    pose_msg = Pose() if not stamped else PoseStamped()
 
     q = R.from_euler(
         seq='xyz', 
@@ -43,6 +44,9 @@ def get_quat_pose(x, y, yaw):
         degrees=False
     ).as_quat()
     
+    if stamped:
+        pose_msg.header.frame_id = 'pose_stamped'
+        pose_msg.header.stamp = rospy.Time.now()
     pose_msg.position.x = x
     pose_msg.position.y = y
     pose_msg.position.z = 0
