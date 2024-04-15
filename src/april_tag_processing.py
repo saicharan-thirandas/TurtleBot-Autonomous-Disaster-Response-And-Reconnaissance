@@ -36,7 +36,7 @@ class AprilTagDetector():
 
         # Subscribe to camera image topic
         self.image_sub = rospy.Subscriber(
-            name='/camera_rect/image_raw/compressed', # '/raspicam_node/image/compressed', /camera_rect/image_raw/compressed
+            name=rospy.get_param('~camera_topic'),
             data_class=CompressedImage,
             callback=self.image_callback,
             queue_size=10
@@ -44,14 +44,14 @@ class AprilTagDetector():
 
         # Publish processed image
         self.image_pub = rospy.Publisher(
-            name='/output_video',
+            name=rospy.get_param('~display_topic'),
             data_class=Image,
             queue_size=10
         )
 
         # Publish detected AprilTag poses
         self.tag_publisher = rospy.Publisher(
-            name='/tag_detections', 
+            name=rospy.get_param('~tags_topic'), 
             data_class=AprilTagDetectionArray, 
             queue_size=10
         )

@@ -28,26 +28,26 @@ class Lidar(Mapping):
 
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
-            name='/odom', 
+            name=rospy.get_param('~odom_topic'), 
             data_class=Odometry, 
             callback=self.update_odom
         )
 
         self.occ_map_pub = rospy.Publisher(
-            name='/occupancy_map',
+            name=rospy.get_param('~occupancy_map_topic'),
             data_class=OccupancyGrid,
             queue_size=10
         )
 
         self.occ_map_pub_cam = rospy.Publisher(
-            name='/occupancy_map_camera',
+            name=rospy.get_param('~occupancy_map_cam_topic'),
             data_class=OccupancyGrid,
             queue_size=10
         )
 
         # Subscribe to the lidar messages
         self.lidar_sub = rospy.Subscriber(
-            name='/scan', 
+            name=rospy.get_param('~lidar_topic'), 
             data_class=LaserScan, 
             callback=self.update_map
         )
@@ -100,14 +100,14 @@ class Lidar(Mapping):
             input_grid=super()._log_odds_to_prob(
                 log_odds=self.occupancy_grid_logodds
                 ) * 100, 
-            cam_pov=False
+            cam_pub=self.occ_map_pub
         )
         
         self.publish(
             input_grid=super()._log_odds_to_prob(
                 log_odds=self.occupancy_grid_logodds_cam
                 ) * 100,
-            cam_pov=True
+            cam_pub=self.occ_map_pub_cam
         )
 
     def _init_map(self):
@@ -134,19 +134,16 @@ class Lidar(Mapping):
         map_init.data = input_grid.flatten().astype(np.int8)
         return map_init
 
-    def publish(self, input_grid: np.ndarray, cam_pov=False):
+    def publish(self, input_grid: np.ndarray, cam_pub: rospy.Publisher):
 
         # Conver the map to a 1D array
         map_update = OccupancyGrid()
         map_update.info = self.map_init.info
-        map_update.header.frame_id = 'occupancy_grid_camera' if cam_pov else 'occupancy_grid'
+        map_update.header.frame_id = 'occupancy_grid' if cam_pub.name==rospy.get_param('~occupancy_map_topic') else 'occupancy_grid_camera'
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
-        if cam_pov:
-            self.occ_map_pub_cam.publish(map_update)
-        else:
-            self.occ_map_pub.publish(map_update)
+        cam_pub.publish(map_update)
 
 
 class GTSAM(Lidar):
@@ -171,8 +168,8 @@ class GTSAM(Lidar):
 
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
-            name='/turtle_pose',
-            data_class=PoseStamped,
+            name=rospy.get_param('~pose_topic'),
+            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
             queue_size=10
         )
 
@@ -189,7 +186,7 @@ class GTSAM(Lidar):
         # Subscribe to the detected tags
         self.landmark_set = set()
         self.tag_sub = rospy.Subscriber(
-            name='/tag_detections', 
+            name=rospy.get_param('~tags_topic'), 
             data_class=AprilTagDetectionArray, 
             callback=self.add_tag_factors
         )
@@ -273,7 +270,7 @@ class GTSAM(Lidar):
     def publish_poses(self, result):
 
         curr_pose = result.atPose2( X(self.current_pose_idx) )
-        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=True)
+        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
         rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
