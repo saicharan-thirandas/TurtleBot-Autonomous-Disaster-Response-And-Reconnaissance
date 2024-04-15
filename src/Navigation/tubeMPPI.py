@@ -28,11 +28,9 @@ class TubeMPPIRacetrack:
         z_traj = self.simulate(self.z, v)
         return z_traj, v
 
-    def get_action(self, x0, waypoint):
+    def get_action(self, x0):
         if self.z is None:
             self.z = x0
-        self.nominal.waypoint = np.array(waypoint).reshape((1, -1))
-        self.ancillary.waypoint = np.array(waypoint).reshape((1, -1))
         z_traj, v = self.solve_nominal()
         self.ancillary.nominal_states = z_traj
         self.ancillary.nominal_actions = v
@@ -42,4 +40,5 @@ class TubeMPPIRacetrack:
         return u, v
 
     def update_goal(self, new_goal):
-        self.nominal.update_goal(new_goal)
+        self.nominal.waypoint = np.array(new_goal).reshape((1, -1))
+        self.ancillary.waypoint = np.array(new_goal).reshape((1, -1))
