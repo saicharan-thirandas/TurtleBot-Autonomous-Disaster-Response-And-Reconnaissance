@@ -3,7 +3,6 @@
 import gtsam
 from gtsam.symbol_shorthand import X, L
 import numpy as np
-from dataclasses import dataclass
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
@@ -11,55 +10,11 @@ from geometry_msgs.msg import Pose
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_quat_pose, get_matrix_pose_from_quat
-
-
-@dataclass
-class Grid:
-    grid_resolution = 0.05 # meters per grid cell
-    grid_size_x = 384  # number of grid cells in the x direction
-    grid_size_y = 384  # number of grid cells in the y direction
-    grid_origin_x = -10.0  # origin of the grid in the x direction
-    grid_origin_y = -10.0  # origin of the grid in the y direction
-
-
-class Mapping(Grid):
-    def __init__(self, 
-                 p_free: float=0.1,
-                 p_occ: float=1.0, 
-                 p_prior: float=0.5):
-        
-        # Initialize occupancy grid with p_prior
-        self.occupancy_grid_logodds = np.zeros((
-            self.grid_size_x, 
-            self.grid_size_y
-        ))
-
-        self.occupancy_grid_logodds_cam = np.zeros((
-            self.grid_size_x, 
-            self.grid_size_y
-        ))
-        
-        self.log_odds_free  = self._prob_to_log_odds(p_free)
-        self.log_odds_occ   = self._prob_to_log_odds(p_occ)
-        self.log_odds_prior = self._prob_to_log_odds(p_prior)
-    
-    def _log_odds_to_prob(self, log_odds: np.ndarray) -> np.ndarray:
-        return 1 - 1 / (1e-6 + 1 + np.exp(log_odds))
-
-    def _prob_to_log_odds(self, prob: np.ndarray) -> np.ndarray:
-        return np.log(prob / (1e-6 + 1 - prob))
-
-    def _coords_to_grid_indicies(self, x, y, w, sign=1):
-        grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
-        grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
-        #grid_w = int(w / self.grid_resolution)
-        return np.array([grid_x, grid_y, w])
-
-    def _grid_indices_to_coords(self, grid_x, grid_y, w, sign=1):
-        x = grid_x * self.grid_resolution - sign * self.grid_origin_x
-        y = grid_y * self.grid_resolution - sign * self.grid_origin_y
-        return x, y, w
+from mapping import Mapping
 
 
 class Lidar(Mapping):
@@ -98,7 +53,7 @@ class Lidar(Mapping):
 
         self.odom = [0., 0., 0.]
 
-    def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds):
+    def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
         D = np.abs( diff[j] )
@@ -106,6 +61,7 @@ class Lidar(Mapping):
     
     def update_odom(self, odom_msg):
         odom = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
+        rospy.loginfo(f"CURR ODOM: {odom}")
         self.odom = odom
 
     def update_map(self, lidar_msg):
@@ -122,11 +78,14 @@ class Lidar(Mapping):
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
                 continue
 
+            # if ranges[i] == np.inf:
+            #     ranges[i] = 3.5
+
             # Get x,y position of laser beam in the map
             hit_x = x + np.cos(beam_angle_rad) * ranges[i]
             hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
-            hit_pt_inds  = super()._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad)
+            hit_pt_inds  = super()._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad, sign=1)
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
 
             self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
@@ -184,9 +143,9 @@ class Lidar(Mapping):
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
         if cam_pov:
-            self.occ_map_pub.publish(map_update)
-        else:
             self.occ_map_pub_cam.publish(map_update)
+        else:
+            self.occ_map_pub.publish(map_update)
 
 
 class GTSAM(Lidar):

@@ -167,6 +167,7 @@ catkin_install_python(PROGRAMS
   src/navigation_node.py
   src/SLAM_node.py
   src/go_forward.py
+  src/update_goal.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 

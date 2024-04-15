@@ -11,43 +11,28 @@ from geometry_msgs.msg import Pose
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
 from image_processing import draw_image
 from transformation_utils import T_RC, T_CR, get_matrix_pose_from_quat
-from SLAM_node import Mapping
+from mapping import Mapping
+
 
 class AprilTagTracker(Mapping):
 
     def __init__(self):
         super(AprilTagTracker, self).__init__()
         rospy.init_node('april_tag_tracker', anonymous=True)
-        self.image  = np.zeros_like(self.occupancy_grid_logodds)
+        self.image  = np.ones(shape=(*self.occupancy_grid_logodds.shape, 3)) * 255
         self.bridge = CvBridge()
 
         self.T_OR = np.eye(4)
         self.T_RO = np.eye(4)
 
-        # Subscribe to SLAM topic and update self.T_OR and self.T_RO
-        self.tag_sub = rospy.Subscriber(
-            name='/turtle_pose',
-            data_class=Pose,
-            callback=self.turtle_pose_update,
-            queue_size=10
-        )
-
-        # Subscribe to tag_detection topic
-        self.tag_sub = rospy.Subscriber(
-            name='/tag_detections',
-            data_class=AprilTagDetectionArray,
-            callback=self.tag_update_callback,
-            queue_size=10
-        )
-
-        self.map_sub = rospy.Subscriber(
-            name='/occupancy_map', 
-            data_class=OccupancyGrid, 
-            callback=self.map_callback,
-            queue_size=10
-        )
+        self.unique_tags = {}
+        self.xy_to_ids   = {}
+        self.current_id  = 0
 
         # Publish tracked AprilTag poses
         self.tag_track_pub = rospy.Publisher(
@@ -63,9 +48,28 @@ class AprilTagTracker(Mapping):
             queue_size=10
         )
 
-        self.unique_tags = {}
-        self.xy_to_ids   = {}
-        self.current_id  = 0
+        # Subscribe to SLAM topic and update self.T_OR and self.T_RO
+        self.turtle_sub = rospy.Subscriber(
+            name='/turtle_pose',
+            data_class=Pose,
+            callback=self.turtle_pose_update,
+            queue_size=10
+        )
+
+        # Subscribe to tag_detection topic
+        self.tag_sub = rospy.Subscriber(
+            name='/tag_detections',
+            data_class=AprilTagDetectionArray,
+            callback=self.tag_update_callback,
+            queue_size=10
+        )
+
+        # self.map_sub = rospy.Subscriber(
+        #     name='/occupancy_map', 
+        #     data_class=OccupancyGrid, 
+        #     callback=self.map_callback,
+        #     queue_size=10
+        # )
 
     def turtle_pose_update(self, turtle_pose_msg):
         
@@ -94,7 +98,7 @@ class AprilTagTracker(Mapping):
             T_CA = get_matrix_pose_from_quat(tag_pose)
             T_OA = self.T_OR @ T_RC @ T_CA
 
-            occ_x, occ_y, _  = super()._coords_to_grid_indicies(T_OA[0, -1], T_OA[1, -1], 0)
+            occ_x, occ_y, _  = super()._coords_to_grid_indicies(T_OA[0, -1], T_OA[1, -1], 0, -1)
             occ_map_location = (occ_x, occ_y)
 
             self.unique_tags[occ_map_location] = T_OA
@@ -127,14 +131,18 @@ class AprilTagTracker(Mapping):
     def run(self):
         rate = rospy.Rate(1)  # 1 Hz
         while not rospy.is_shutdown():
-            grid_pose  = super()._coords_to_grid_indicies(*self.T_OR[:3, -1]) # -> current [x, y, w] to [grid_x, grid_y, grid_w]
+            curr_xyz   = self.T_OR[:3, -1]
+            grid_pose  = super()._coords_to_grid_indicies(*curr_xyz, sign=-1) # -> current [x, y, w] to [grid_x, grid_y, grid_w]
+            xy_to_ids  = {xy: self.xy_to_ids[xy] for xy, _ in self.unique_tags.items()}
             self.image = draw_image(
                 self.occupancy_grid_logodds.copy(), 
                 self.image, 
                 grid_pose, 
-                {xy: self.xy_to_ids[xy] for xy, _ in self.unique_tags.items()} 
+                xy_to_ids
             )
-            self.viz_traj_pub.publish(self.bridge.cv2_to_imgmsg(self.image))
+            rospy.loginfo(f"GRID POSE: {grid_pose}")
+            rospy.loginfo(f"XY to IDS: {xy_to_ids}")
+            self.viz_traj_pub.publish(self.bridge.cv2_to_imgmsg(self.image.astype(np.uint8)))
             rate.sleep()
 
 if __name__ == '__main__':

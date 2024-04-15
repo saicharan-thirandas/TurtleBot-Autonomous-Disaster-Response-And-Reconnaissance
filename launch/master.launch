@@ -6,16 +6,17 @@
     <arg name="multi_robot_name" default=""/>
     <arg name="launch_prefix" default="" />
     <arg name="queue_size" default="10" />
-    <arg name="camera_topic" default="/camera_rect/image_raw"/>
+    <arg name="camera_topic" default="/raspicam_node/image/compressed"/>
     <arg name="cmd_vel_topic" default="/cmd_vel" />
     <arg name="odom_topic" default="/odom" />
     <arg name="lidar_topic" default="/scan" />
     <arg name="image_topic" default="/output_video"/>
     <arg name="move_forward_only" default="false"/>
-
+<!-- /camera_rect/image_raw -->
     <!-- Existing nodes -->
     <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
     <node pkg="squirtle" type="SLAM_node.py" name="slam" output="screen"> </node>
     <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen"> </node>
-    <!-- <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen"> </node> -->
+    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="update_goal.py" name="goal_update" output="screen"> </node> -->
 </launch>

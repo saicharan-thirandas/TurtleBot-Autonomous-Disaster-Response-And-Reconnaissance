@@ -8,14 +8,17 @@ from nav_msgs.msg import Odometry, OccupancyGrid
 from std_msgs.msg import Bool
 import cv2
 import numpy as np
-from SLAM_node import Mapping
 from scipy.spatial.transform import Rotation as R
-from transformation_utils import get_matrix_pose_from_quat , get_quat_pose , calculate_yaw
 
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
+from transformation_utils import get_matrix_pose_from_quat , get_quat_pose , calculate_yaw
+from mapping import Mapping
 
 
 class GoalUpdater:
-    def __init__(self, goal_x, goal_y, tolerance=0.1):
+    def __init__(self):
         rospy.init_node('goal_updater')
         # Publisher to send commands to the robo                # Subscribe to lidar map topic
         self.reset_goal =False
@@ -197,7 +200,7 @@ class GoalUpdater:
         while not rospy.is_shutdown():
             if lidar_map_cv2 is not None and camera_map_cv2 is not None and turtle_pose is not None and self.reset_goal is True:
                 try:
-                    cor_x, cor_y = Mapping._coords_to_grid_indicies(turtle_pose.pose.position.x, turtle_pose.pose.position.y)
+                    cor_x, cor_y = Mapping._coords_to_grid_indicies(turtle_pose.pose.position.x, turtle_pose.pose.position.y, sign=-1)
                     turtle_position = np.array([cor_x, cor_y])
 
                     new_target_position, _, _, _ = self.find_goal_position(turtle_position, lidar_map_cv2, camera_map_cv2)

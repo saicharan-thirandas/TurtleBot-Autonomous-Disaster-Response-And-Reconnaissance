@@ -7,10 +7,13 @@ import numpy as np
 import rospy
 from apriltag_ros.msg import AprilTagDetectionArray, AprilTagDetection
 from pupil_apriltags import Detector
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge, CvBridgeError
 import cv2
 
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
 from image_processing import draw_bbox
 
 
@@ -33,8 +36,8 @@ class AprilTagDetector():
 
         # Subscribe to camera image topic
         self.image_sub = rospy.Subscriber(
-            name='/camera_rect/image_raw',
-            data_class=Image,
+            name='/camera_rect/image_raw/compressed', # '/raspicam_node/image/compressed', /camera_rect/image_raw/compressed
+            data_class=CompressedImage,
             callback=self.image_callback,
             queue_size=10
         )
@@ -57,7 +60,7 @@ class AprilTagDetector():
 
         try:
             # Convert ROS Image message to OpenCV format
-            cv_image = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            cv_image = self.bridge.compressed_imgmsg_to_cv2(msg, desired_encoding='bgr8')
         except CvBridgeError as e:
             rospy.logerr(f"CV Bridge Error: {e}")
             return
@@ -77,7 +80,9 @@ class AprilTagDetector():
         )
 
         if len(detections) == 0:
+            self.publish_image(cv_image)
             return
+        
         rospy.loginfo(f"Sucessfully detected {len(detections)} tags")
         
         # Publish detected tag poses
@@ -89,7 +94,7 @@ class AprilTagDetector():
             tag_id   = detection.tag_id
             tag_fam  = detection.tag_family.decode("utf-8")
 
-            draw_bbox(cv_image, detection.corners, detection.center, tag_fam)
+            cv_image = draw_bbox(cv_image, detection.corners, detection.center, tag_fam)
 
             rot = detection.pose_R
             t = detection.pose_t
@@ -107,9 +112,11 @@ class AprilTagDetector():
             tag_msg.detections.append(tag)
 
         self.tag_publisher.publish(tag_msg)
+        self.publish_image(cv_image)
 
+    def publish_image(self, cv_image):
         try:
-            self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image, "bgr8"))
+            self.image_pub.publish(self.bridge.cv2_to_imgmsg(cv_image.astype(np.uint8), 'bgr8'))
         except CvBridgeError as e:
             rospy.logerr(f"CV Bridge Error: {e}")
             return

@@ -7,8 +7,8 @@ T_RC = np.array([[1., 0., 0., 0.], # TODO: Get Camera's frame w.r.t. Robot's bas
                  [0., 0., 1., 0.],  
                  [0., 0., 0., 1.]])
 T_CR = np.eye(4)
-T_CR[:3, :3] = T_RC.T
-T_CR[:3, -1] = -(T_RC.T) @ np.array(T_RC[:3, -1])
+T_CR[:3, :3] = T_RC[:3, :3].T
+T_CR[:3, -1] = -(T_RC[:3, -1].T) @ np.array(T_RC[:3, -1])
 
 
 def get_matrix_pose_from_quat(pose, return_matrix=True):
