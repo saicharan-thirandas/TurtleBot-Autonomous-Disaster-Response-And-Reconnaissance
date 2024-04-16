@@ -1,0 +1,23 @@
+rospack list-names
+
+TODO:
+
+1. Install following packages:
+apriltag_ros - Done
+
+2. Add the appropriate/required packages in CMakeLists.txt and package.xml
+
+3. Make all the python scripts/nodes executable. Build and source ROS workspace-   @German - u meant launch file ? 
+@sai No, so I mean 'chmod +x src/pythonscript.py'. Launch files only make it so I don't have to do roscore and rosrun pythonscript.py.
+
+4. Add additional python scripts into CMakeLists.txt (i think) - @German - i think .launch file should take care of it. let me check. 
+@sai From my understanding, when we compile ros (catkin_build/cakin_make) ros needs to know what nodes should build the graph, hence we need to at them to CMakeLists.txt. But looking at nikhils and aryamans code, they didn't do that so I'm not too sure.
+
+
+5. Could you make sudo password something that can be shared. Installing packages requires sudo
+new one is : not@t@ll230
+
+also 1. 2. 3. 4 where general TODO's
+2,3,4- i will look into it today afternoon'. I will look into ros package and catking build part . does it have dependency to run and check the flow in the simulation ? 
+Just to run catkin_build doesn't need any dependencies. However, in the python script, whatever we import from (ex: from geometry_msgs.msg import Twist), needs to be installed.. I think it goes into package.xml ..am i right ?
+yes and in the CMakeList.txt

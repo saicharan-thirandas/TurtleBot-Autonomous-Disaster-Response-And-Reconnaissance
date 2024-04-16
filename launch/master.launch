@@ -1,0 +1,51 @@
+<launch>
+    <!-- <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="model type [burger, waffle, waffle_pi]"/>
+    <arg name="configuration_basename" default="turtlebot3_lds_2d.lua"/>
+    <arg name="open_rviz" default="true"/>
+    <arg name="multi_robot_name" default=""/>
+    <arg name="launch_prefix" default="" />
+    <arg name="queue_size" default="10" />
+    <arg name="cmd_vel_topic" default="/cmd_vel" /> -->
+    
+    <!-- Arguments -->
+    <arg name="lidar_topic" default="/scan" />
+    <arg name="odom_topic" default="/odom" />
+    <arg name="occupancy_map_topic" default="/occupancy_map" />
+    <arg name="occupancy_map_cam_topic" default="/occupancy_map_camera" />
+    <arg name="pose_topic" default="/turtle_pose" />
+    <arg name="pose_stamped" default="true" />
+    <arg name="tags_topic" default="/tag_detections" />
+    <arg name="camera_topic" default="/camera_rect/image_raw/compressed"/> <!-- /raspicam_node/image/compressed,  -->
+    <arg name="display_topic" default="/output_video"/>
+    <arg name="track_topic" default="/tag_tracker"/>
+
+
+    <!-- SLAM Node -->
+    <node pkg="squirtle" type="SLAM_node.py" name="slam" output="screen"> 
+        <param name="odom_topic" value="$(arg odom_topic)" />
+        <param name="occupancy_map_topic" value="$(arg occupancy_map_topic)" /> 
+        <param name="occupancy_map_cam_topic" value="$(arg occupancy_map_cam_topic)" /> 
+        <param name="lidar_topic" value="$(arg lidar_topic)" /> 
+        <param name="pose_topic" value="$(arg pose_topic)" /> 
+        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+        <param name="tags_topic" value="$(arg tags_topic)" /> 
+    </node>
+
+    <!-- Tag Detection Node -->
+    <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen">
+        <param name="camera_topic" value="$(arg camera_topic)" /> 
+        <param name="display_topic" value="$(arg display_topic)" /> 
+        <param name="tags_topic" value="$(arg tags_topic)" /> 
+    </node>
+
+    <!-- Tag Tracking Node -->
+    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen">
+        <param name="pose_topic" value="$(arg pose_topic)" /> 
+        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+        <param name="tags_topic" value="$(arg tags_topic)" /> 
+        <param name="track_topic" value="$(arg track_topic)" /> 
+    </node>
+
+    <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
+    <!-- <node pkg="squirtle" type="update_goal.py" name="goal_update" output="screen"> </node> -->
+</launch>
