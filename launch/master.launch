@@ -15,7 +15,7 @@
     <arg name="pose_topic" default="/turtle_pose" />
     <arg name="pose_stamped" default="true" />
     <arg name="tags_topic" default="/tag_detections" />
-    <arg name="camera_topic" default="/camera_rect/image_raw"/> <!-- /raspicam_node/image/compressed,  -->
+    <arg name="camera_topic" default="/camera_rect/image_raw/compressed"/> <!-- /raspicam_node/image/compressed,  -->
     <arg name="display_topic" default="/output_video"/>
     <arg name="track_topic" default="/tag_tracker"/>
 
@@ -45,7 +45,7 @@
         <param name="tags_topic" value="$(arg tags_topic)" /> 
         <param name="track_topic" value="$(arg track_topic)" /> 
     </node>
-    
+
     <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
     <!-- <node pkg="squirtle" type="update_goal.py" name="goal_update" output="screen"> </node> -->
 </launch>
