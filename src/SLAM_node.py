@@ -6,9 +6,10 @@ import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import Pose, PoseStamped, Twist
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
+from std_msgs.msg import Bool
 
 import os
 import sys
@@ -25,6 +26,7 @@ class Lidar(Mapping):
         self._init_map()
         self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
+        self.narrow_cam_pov= lambda angle_rad: angle_rad >= np.deg2rad(-30) and angle_rad <= np.deg2rad(30)
 
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
@@ -52,6 +54,20 @@ class Lidar(Mapping):
             callback=self.update_map
         )
 
+        self.goal_reset_publisher = rospy.Publisher(
+            name=rospy.get_param('~goal_reset'), 
+            data_class=Bool, 
+            queue_size=10
+        )
+
+
+        # Subscriber to the cmd_vel topic
+        self.cmd_vel_sub = rospy.Subscriber(
+            '/cmd_vel',  
+            Twist,
+            callback=self.cmd_vel_callback
+        )
+
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
@@ -65,7 +81,11 @@ class Lidar(Mapping):
         self.dy += twist_msg.linear.y
         self.dw += twist_msg.angular.z
 
-    def update_map(self, lidar_msg):
+    def cmd_vel_callback(self, msg):
+        # Handling velocity commands...
+        rospy.loginfo(f"Received velocity command - Linear: {msg.linear.x}, Angular: {msg.angular.z}")
+
+    def update_map(self, lidar_msg, distance_threshold=2.0):
 
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
@@ -95,6 +115,17 @@ class Lidar(Mapping):
             if self.in_cam_pov(angle_rad):
                 self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
                 self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+
+            if self.narrow_cam_pov(angle_rad) and ranges[i] < distance_threshold:
+                self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] += self.log_odds_occ - self.log_odds_prior
+                self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] += self.log_odds_free - self.log_odds_prior
+
+                # Stop the robot
+                stop_msg = Twist()  # Create a Twist message
+                stop_msg.linear.x = 0
+                stop_msg.angular.z = 0
+                self.cmd_pub.publish(stop_msg) 
+                self.goal_reset_publisher.publish(True)
 
         self.publish(
             input_grid=super()._log_odds_to_prob(
@@ -153,7 +184,7 @@ class GTSAM(Lidar):
 
         rospy.init_node('slam_node', anonymous=True)
         super(GTSAM, self).__init__()
-
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
         )
