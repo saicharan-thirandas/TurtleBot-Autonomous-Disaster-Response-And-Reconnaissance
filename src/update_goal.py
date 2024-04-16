@@ -99,7 +99,7 @@ class GoalUpdater:
     def turtle_pose_callback(self, pose_msg):
         if rospy.get_param('~pose_stamped'):
             pose_msg = pose_msg.pose
-        self.turtle_pose = get_matrix_pose_from_quat(pose_msg.pose.pose, return_matrix=False)
+        self.turtle_pose = get_matrix_pose_from_quat(pose_msg, return_matrix=False)
 
     def goal_reset_callback(self, msg):
         self.reset_goal = msg
