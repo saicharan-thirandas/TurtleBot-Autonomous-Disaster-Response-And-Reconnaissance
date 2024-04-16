@@ -2,7 +2,7 @@
 
 import rospy
 from sensor_msgs.msg import Image
-from geometry_msgs.msg import PoseStamped , Pose 
+from geometry_msgs.msg import PoseStamped, Pose 
 from cv_bridge import CvBridge, CvBridgeError
 from nav_msgs.msg import Odometry, OccupancyGrid 
 from std_msgs.msg import Bool
@@ -19,37 +19,42 @@ from mapping import Mapping
 
 class GoalUpdater:
     def __init__(self):
-        rospy.init_node('goal_updater')
         # Publisher to send commands to the robo                # Subscribe to lidar map topic
+        rospy.init_node('update_goal', anonymous=True)
+        self.lidar_map = None
+        self.camera_map = None
+        self.turtle_pose = None
+        self.reset_goal = False
+
         self.reset_goal =False
         rospy.Subscriber(
-                name='/occupancy_map',
+                name=rospy.get_param('~occupancy_map_topic'),
                 data_class=OccupancyGrid,
                 callback=self.occupancy_grid_callback_lidar,
                 queue_size=10
             )
 
         rospy.Subscriber(
-                name='/occupancy_map_camera',
+                name=rospy.get_param('~occupancy_map_cam_topic'),
                 data_class=OccupancyGrid,
                 callback=self.occupancy_grid_callback_camera,
                 queue_size=10
             )
         
         rospy.Subscriber(
-            name='/turtle_pose',
-            data_class=Pose,
+            name=rospy.get_param('~pose_topic'),
+            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
             callback=self.turtle_pose_callback,
             queue_size=10
         )
 
         rospy.Subscriber(
-            name='/update_goal/reset',
+            name=rospy.get_param('~goal_reset'),
             data_class=Bool,
             callback=self.goal_reset_callback,
             queue_size=10
         )
-
+  
     def occupancy_grid_callback_lidar(self,data):
         # Extracting map data from OccupancyGrid message
         width = data.info.width
@@ -66,13 +71,14 @@ class GoalUpdater:
         # Normalize the values to fit in the range [0, 255]
         image = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
 
+        rospy.loginfo("subscired to lidar map")
 
         # Optionally, you can resize the image for better visualization
         # image = cv2.resize(image, None, fx=0.5, fy=0.5, interpolation=cv2.INTER_NEAREST)
         # Display or save the image
         self.lidar_map = image
-        cv2.imshow("Occupancy Grid", image)
-        cv2.waitKey(0) 
+        cv2.imshow("Occupancy Grid from goal update", image)
+        cv2.waitKey(10) 
     
     def occupancy_grid_callback_camera(self,data):
         # Extracting map data from OccupancyGrid message
@@ -84,25 +90,16 @@ class GoalUpdater:
         map_array = np.array(map_data).reshape((height, width))
 
         image = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        rospy.loginfo("subscired to camera map")
 
         self.camera_map = image
         cv2.imshow("Occupancy Grid", image)
         cv2.waitKey(0) 
     
-    #TODO - Lidar to recheck the function.
     def turtle_pose_callback(self, pose_msg):
-        x = pose_msg.pose.pose.position.x
-        y = pose_msg.pose.pose.position.y
-
-        rot = R.from_quat([
-            pose_msg.pose.pose.orientation.x,
-            pose_msg.pose.pose.orientation.y,
-            pose_msg.pose.pose.orientation.z,
-            pose_msg.pose.pose.orientation.w
-        ])
-
-        _, _, yaw = rot.as_euler('xyz', degrees=False)
-        self.turtle_pose = [x, y, yaw]
+        if rospy.get_param('~pose_stamped'):
+            pose_msg = pose_msg.pose
+        self.turtle_pose = get_matrix_pose_from_quat(pose_msg.pose.pose, return_matrix=False)
 
     def goal_reset_callback(self, msg):
         self.reset_goal = msg
@@ -171,39 +168,33 @@ class GoalUpdater:
         
         return new_target_position, filtered_image1, filtered_image2 ,diff_image
 
-
     def create_pose_msg(x, y, yaw):
-        pose_msg = Pose()
-        pose_msg.position.x = x
-        pose_msg.position.y = y
-        pose_msg.position.z = 0.0  # Assuming z-coordinate is 0 for 2D pose
-        pose_msg.orientation.x = 0.0
-        pose_msg.orientation.y = 0.0
-        pose_msg.orientation.z = np.sin(yaw / 2)  # Convert yaw to quaternion
-        pose_msg.orientation.w = np.cos(yaw / 2)  # Convert yaw to quaternion
-        return pose_msg
+        return get_quat_pose(x, y, yaw, stamped=rospy.get_param('~pose_stamped'))
     
     def main(self):
 
 
         # Publisher for updated goal
-        goal_publisher = rospy.Publisher("/update_goal/current_goal", PoseStamped, queue_size=10)
-        goal_reset_publisher = rospy.Publisher("/update_goal/reset", PoseStamped, queue_size=10)
+        goal_publisher = rospy.Publisher(rospy.get_param("~goal_update"), PoseStamped, queue_size=10)
+        goal_reset_publisher = rospy.Publisher(rospy.get_param("~goal_reset"), PoseStamped, queue_size=10)
 
         # Create a CvBridge
-        lidar_map_cv2=self.lidar_map
-        camera_map_cv2=self.camera_map
+                # Initialize at
 
         rate = rospy.Rate(1)  # 10Hz loop rate
-        turtle_pose=self.turtle_pose
 
         while not rospy.is_shutdown():
-            if lidar_map_cv2 is not None and camera_map_cv2 is not None and turtle_pose is not None and self.reset_goal is True:
+            rospy.loginfo("Lidar map info" + str(self.lidar_map) +  "camera map info" + str(self.camera_map) + " || turtle post " + str(self.turtle_pose) + str(self.reset_goal))
+
+            if self.lidar_map is not None and self.camera_map is not None and self.turtle_pose is not None and self.reset_goal is True:
+                turtle_pose=self.turtle_pose
+                rospy.loginfo("recieved a request to update the goal")
+
                 try:
                     cor_x, cor_y = Mapping._coords_to_grid_indicies(turtle_pose.pose.position.x, turtle_pose.pose.position.y, sign=-1)
                     turtle_position = np.array([cor_x, cor_y])
 
-                    new_target_position, _, _, _ = self.find_goal_position(turtle_position, lidar_map_cv2, camera_map_cv2)
+                    new_target_position, _, _, _ = self.find_goal_position(turtle_position, self.lidar_map, self.camera_map)
 
                     # Publish updated goal
                     if new_target_position is not None:
@@ -226,5 +217,6 @@ if __name__ == '__main__':
     try:
         goal_updater=GoalUpdater()
         goal_updater.main()
+        #data recieved is None
     except rospy.ROSInterruptException:
         pass

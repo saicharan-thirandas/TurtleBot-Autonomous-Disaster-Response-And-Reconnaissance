@@ -1,6 +1,11 @@
 # tube_mppi_racetrack.py
 
 import numpy as np
+
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
+
 from ILQG import AncillaryILQG
 from MotionModel import MotionModel, Unicycle, NoisyUnicycle
 from MPPI import MPPIRacetrack

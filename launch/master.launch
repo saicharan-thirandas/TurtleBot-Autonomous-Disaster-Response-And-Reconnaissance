@@ -18,6 +18,8 @@
     <arg name="camera_topic" default="/camera_rect/image_raw/compressed"/> <!-- /raspicam_node/image/compressed,  -->
     <arg name="display_topic" default="/output_video"/>
     <arg name="track_topic" default="/tag_tracker"/>
+    <arg name="goal_update" default="/goal_update"/> 
+    <arg name="goal_reset" default="/goal_reset"/>
 
 
     <!-- SLAM Node -->
@@ -46,6 +48,17 @@
         <param name="track_topic" value="$(arg track_topic)" /> 
     </node>
 
-    <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
-    <!-- <node pkg="squirtle" type="update_goal.py" name="goal_update" output="screen"> </node> -->
+    <!-- Frontier Node -->
+    <node pkg="squirtle" type="update_goal.py" name="goal_update_node" output="screen">
+        <param name="goal_update" value="$(arg goal_update)" /> 
+        <param name="goal_reset" value="$(arg goal_reset)" /> 
+        <param name="occupancy_map_topic" value="$(arg occupancy_map_topic)" /> 
+        <param name="occupancy_map_cam_topic" value="$(arg occupancy_map_cam_topic)" /> 
+        <param name="pose_topic" value="$(arg pose_topic)" /> 
+        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+    </node> 
+
+    <!-- Navigation Node -->
+    <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node>
+
 </launch>

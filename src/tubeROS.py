@@ -4,7 +4,11 @@ from geometry_msgs.msg import Twist, Point, PoseStamped
 from nav_msgs.msg import OccupancyGrid
 from tf.transformations import euler_from_quaternion
 
-from tubeMPPI import TubeMPPIRacetrack
+
+import os
+import sys
+sys.path.append(os.path.dirname(__file__))
+from Navigation.tubeMPPI import TubeMPPIRacetrack
 
 class TubeMPPIROSNode:
     def __init__(self):

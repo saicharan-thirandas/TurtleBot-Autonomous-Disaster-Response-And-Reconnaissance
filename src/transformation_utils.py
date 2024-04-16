@@ -44,9 +44,10 @@ def get_quat_pose(x, y, yaw, stamped=False):
         degrees=False
     ).as_quat()
     
+    pose_msg.header.frame_id = 'pose_stamped' if stamped else 'pose'
+    pose_msg.header.stamp = rospy.Time.now()
+    
     if stamped:
-        pose_msg.header.frame_id = 'pose_stamped'
-        pose_msg.header.stamp = rospy.Time.now()
         pose_msg.pose.position.x = x
         pose_msg.pose.position.y = y
         pose_msg.pose.position.z = 0

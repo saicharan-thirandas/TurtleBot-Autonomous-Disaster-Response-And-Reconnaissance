@@ -164,10 +164,9 @@ include_directories(
 catkin_install_python(PROGRAMS
   src/april_tag_processing.py
   src/april_tag_tracker.py
-  src/navigation_node.py
   src/SLAM_node.py
-  src/go_forward.py
   src/update_goal.py
+  src/tubeROS.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
