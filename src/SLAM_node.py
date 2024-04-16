@@ -26,7 +26,8 @@ class Lidar(Mapping):
         self._init_map()
         self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
-        self.narrow_cam_pov= lambda angle_rad: angle_rad >= np.deg2rad(-30) and angle_rad <= np.deg2rad(30)
+        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(-10) or angle_rad <= np.deg2rad(10)
+        self.distance_threshold = 0.2
 
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
@@ -60,14 +61,6 @@ class Lidar(Mapping):
             queue_size=10
         )
 
-
-        # Subscriber to the cmd_vel topic
-        self.cmd_vel_sub = rospy.Subscriber(
-            '/cmd_vel',  
-            Twist,
-            callback=self.cmd_vel_callback
-        )
-
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
@@ -81,15 +74,13 @@ class Lidar(Mapping):
         self.dy += twist_msg.linear.y
         self.dw += twist_msg.angular.z
 
-    def cmd_vel_callback(self, msg):
-        # Handling velocity commands...
-        rospy.loginfo(f"Received velocity command - Linear: {msg.linear.x}, Angular: {msg.angular.z}")
-
-    def update_map(self, lidar_msg, distance_threshold=2.0):
+    def update_map(self, lidar_msg):
 
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
         obs_pt_inds = super()._coords_to_grid_indicies(x, y, w, sign=1)
+        narrow_pov_ranges = 0
+        narrow_pov_counts = 0
 
         for i in range(len(ranges)):
             # Get angle of range
@@ -116,16 +107,15 @@ class Lidar(Mapping):
                 self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
                 self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
-            if self.narrow_cam_pov(angle_rad) and ranges[i] < distance_threshold:
-                self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] += self.log_odds_occ - self.log_odds_prior
-                self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] += self.log_odds_free - self.log_odds_prior
+            if self.narrow_cam_pov(angle_rad):
+                narrow_pov_ranges += ranges[i]
+                narrow_pov_counts += 1
 
-                # Stop the robot
-                stop_msg = Twist()  # Create a Twist message
-                stop_msg.linear.x = 0
-                stop_msg.angular.z = 0
-                self.cmd_pub.publish(stop_msg) 
-                self.goal_reset_publisher.publish(True)
+        rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
+        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold:
+            reset = Bool()
+            reset.data = True
+            self.goal_reset_publisher.publish(reset)
 
         self.publish(
             input_grid=super()._log_odds_to_prob(
@@ -304,7 +294,7 @@ class GTSAM(Lidar):
         pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
-        # rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
+        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
         
     def run(self):
 

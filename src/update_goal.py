@@ -21,7 +21,7 @@ class GoalUpdater(Mapping):
     def __init__(self):
         super(GoalUpdater, self).__init__()
         rospy.init_node('update_goal', anonymous=True)
-        self.reset_goal  = False
+        self.reset_goal = False
 
         rospy.Subscriber(
             name=rospy.get_param('~occupancy_map_topic'),
@@ -67,7 +67,6 @@ class GoalUpdater(Mapping):
         # Extracting map data from OccupancyGrid message
         width = data.info.width
         height = data.info.height
-        resolution = data.info.resolution
         map_data = data.data
 
         map_array = np.array(map_data).reshape((height, width))
@@ -78,7 +77,6 @@ class GoalUpdater(Mapping):
         # Extracting map data from OccupancyGrid message
         width = data.info.width
         height = data.info.height
-        resolution = data.info.resolution
         map_data = data.data
 
         map_array = np.array(map_data).reshape((height, width))
@@ -92,18 +90,22 @@ class GoalUpdater(Mapping):
 
     def goal_reset_callback(self, msg):
         self.reset_goal = msg.data
+        rospy.loginfo(f"Reset the goal: {self.reset_goal}")
 
     def filter_frontier(self , image):
         _, thresholded = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
         inverted = cv2.bitwise_not(thresholded)        
         return inverted
     
-    def find_closest_pixel(self,current_position, image):
-        # Find all non-black pixels (pixel value > 10) in the image
-        non_black_pixels_indices = np.argwhere(image > 10)
-        
+    def find_closest_pixel(self, current_position, diff_image):
+        """ 
+        Given the current position in the occupancy map and the 
+        occupancy map corresponding to the ~camera_pov...
+        """
+
+        # In diff_image, the white pixels are the fronties outside the camera's pov
+        non_black_pixels_indices = np.argwhere(diff_image > 10)
         if len(non_black_pixels_indices) == 0:
-            # If there are no non-black pixels, return None
             return None
         
         # Randomly sample 10% of non-black pixels
@@ -111,40 +113,28 @@ class GoalUpdater(Mapping):
         sampled_indices = np.random.choice(len(non_black_pixels_indices), num_samples, replace=False)
         sampled_pixels = non_black_pixels_indices[sampled_indices]
         
-        # Reshape sampled pixels to fit the k-means input format
         sampled_pixels = np.float32(sampled_pixels)
-        
-        # Perform pairwise distance calculation
         distances = np.linalg.norm(sampled_pixels - current_position, axis=1)
-        
-        # Find the index of the minimum distance
-        min_distance_index = np.argmin(distances)
-        
-        # Get the closest pixel coordinates
+        min_distance_index = np.argmin(distances)        
         closest_pixel = sampled_pixels[min_distance_index]
         
         return closest_pixel.astype(int)  # Return as integer coordinates
     
-    def find_goal_position(self, current_position, image1, image2):
+    def find_goal_position(self, current_position, lidar_map, camera_map):
+        """ 
+        Given the turtle's position in the occupancy map, occupancy map from the
+        lidar and the occupancy from the camera's POV...
+        """
         
-        # Filter out black values in both images
-        filtered_image1 = self.filter_frontier(image1)
-        filtered_image2 = self.filter_frontier(image2)
+        filtered_image1 = self.filter_frontier(lidar_map)
+        filtered_image2 = self.filter_frontier(camera_map)
         
-        # Calculate the absolute difference between filtered images
         diff_image = cv2.absdiff(filtered_image1, filtered_image2)
         diff_image = cv2.bitwise_xor(filtered_image1, filtered_image2)
         
-        # Find the closest pixel in the difference image
         closest_pixel = self.find_closest_pixel(current_position, diff_image)
-        
-        if closest_pixel is not None:
-            # Set the closest non-black pixel as the new target position
-            new_target_position = closest_pixel
-        else:
-            # If no non-black pixels found, set new_target_position to None
-            new_target_position = None
-        
+        new_target_position = closest_pixel if closest_pixel is not None else None
+
         return new_target_position, filtered_image1, filtered_image2, diff_image
 
     def create_pose_msg(x, y, yaw):
