@@ -59,6 +59,6 @@
     </node> 
 
     <!-- Navigation Node -->
-    <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node> -->
 
 </launch>

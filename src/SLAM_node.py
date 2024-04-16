@@ -240,7 +240,7 @@ class GTSAM(Lidar):
     def add_odem_factors(self):
 
         assert self.current_pose_idx >= 1
-        rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
+        # rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
         odometry = gtsam.Pose2(self.dx, self.dy, self.dw)
 
         self.initial_estimate.insert(
@@ -248,7 +248,7 @@ class GTSAM(Lidar):
             self.initial_estimate.atPose2( X(self.current_pose_idx-1) ).compose(odometry)
         )
 
-        rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
+        # rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
         self.graph.add(
             gtsam.BetweenFactorPose2(
                 X(self.current_pose_idx-1), 
@@ -273,7 +273,7 @@ class GTSAM(Lidar):
         pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
-        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
+        # rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
         
     def run(self):
 

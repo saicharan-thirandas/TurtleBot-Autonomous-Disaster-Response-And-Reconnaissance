@@ -1,7 +1,8 @@
 import numpy as np
-from MotionModel import Unicycle 
+from MotionModel import Unicycle
 import matplotlib as plt
-#@title MPPI
+
+
 class MPPIRacetrack:
     def __init__(
         self,
@@ -20,27 +21,15 @@ class MPPIRacetrack:
 
         self.motion_model = motion_model
         self.action_limits = np.vstack(
-            [motion_model.action_space.low, motion_model.action_space.high]
+            [np.array([0., -2*np.pi]), [np.array([5, 2*np.pi])]]
         )
 
         self.static_map = static_map
-
-        #set way points
-        # self.waypoints = np.array(
-        #     [
-        #         [-3.0, 0.0],
-        #         [-2.0, 4.0],
-        #         [4.0, 1.0],
-        #         [-3.0, 0.0],
-        #     ]
-        # )
         self.waypoint = None
-
-        self.cmap = plt.get_cmap("winter_r")
 
         self.nominal_actions = np.zeros(
             (self.num_steps_per_rollout,)
-            + self.motion_model.action_space.shape,
+            + (2,),
         )
         self.nominal_actions[:, 0] = 1.0
 
@@ -86,7 +75,7 @@ class MPPIRacetrack:
                     self.num_rollouts_per_iteration,
                     self.num_steps_per_rollout,
                 )
-                + self.motion_model.action_space.shape,
+                + (2,),
             )
             actions = np.clip(
                 nominal_actions + delta_actions,
