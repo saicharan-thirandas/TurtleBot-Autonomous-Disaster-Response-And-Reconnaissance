@@ -47,13 +47,21 @@ def get_quat_pose(x, y, yaw, stamped=False):
     if stamped:
         pose_msg.header.frame_id = 'pose_stamped'
         pose_msg.header.stamp = rospy.Time.now()
-    pose_msg.position.x = x
-    pose_msg.position.y = y
-    pose_msg.position.z = 0
-    pose_msg.orientation.x = q[0]
-    pose_msg.orientation.y = q[1]
-    pose_msg.orientation.z = q[2]
-    pose_msg.orientation.w = q[3]
+        pose_msg.pose.position.x = x
+        pose_msg.pose.position.y = y
+        pose_msg.pose.position.z = 0
+        pose_msg.pose.orientation.x = q[0]
+        pose_msg.pose.orientation.y = q[1]
+        pose_msg.pose.orientation.z = q[2]
+        pose_msg.pose.orientation.w = q[3]
+    else:
+        pose_msg.position.x = x
+        pose_msg.position.y = y
+        pose_msg.position.z = 0
+        pose_msg.orientation.x = q[0]
+        pose_msg.orientation.y = q[1]
+        pose_msg.orientation.z = q[2]
+        pose_msg.orientation.w = q[3]
     return pose_msg
 
 

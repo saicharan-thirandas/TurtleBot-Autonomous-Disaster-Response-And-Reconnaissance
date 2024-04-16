@@ -15,7 +15,7 @@
     <arg name="pose_topic" default="/turtle_pose" />
     <arg name="pose_stamped" default="true" />
     <arg name="tags_topic" default="/tag_detections" />
-    <arg name="camera_topic" default="/raspicam_node/image/compressed"/>
+    <arg name="camera_topic" default="/camera_rect/image_raw"/> <!-- /raspicam_node/image/compressed,  -->
     <arg name="display_topic" default="/output_video"/>
     <arg name="track_topic" default="/tag_tracker"/>
 
@@ -32,17 +32,19 @@
     </node>
 
     <!-- Tag Detection Node -->
-    <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen"> </node>
+    <node pkg="squirtle" type="april_tag_processing.py" name="tag_detector" output="screen">
         <param name="camera_topic" value="$(arg camera_topic)" /> 
         <param name="display_topic" value="$(arg display_topic)" /> 
         <param name="tags_topic" value="$(arg tags_topic)" /> 
+    </node>
 
     <!-- Tag Tracking Node -->
-    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen"> </node>
+    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen">
         <param name="pose_topic" value="$(arg pose_topic)" /> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
-        <arg name="tags_topic" default="/tag_detections" />
-        <arg name="track_topic" default="/tag_tracker"/>
+        <param name="tags_topic" value="$(arg tags_topic)" /> 
+        <param name="track_topic" value="$(arg track_topic)" /> 
+    </node>
     
     <!-- <node pkg="squirtle" type="navigation_node.py" name="navigation" output="screen"> </node> -->
     <!-- <node pkg="squirtle" type="update_goal.py" name="goal_update" output="screen"> </node> -->

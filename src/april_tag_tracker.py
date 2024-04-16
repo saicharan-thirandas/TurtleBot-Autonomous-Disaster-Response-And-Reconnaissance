@@ -3,6 +3,7 @@
 import cv2
 from scipy.spatial.transform import Rotation as R
 import numpy as np
+from typing import Union
 
 import rospy
 from apriltag_ros.msg import AprilTagDetectionArray, AprilTagDetection
@@ -54,8 +55,10 @@ class AprilTagTracker(Mapping):
             queue_size=10
         )
 
-    def turtle_pose_update(self, turtle_pose_msg):
+    def turtle_pose_update(self, turtle_pose_msg: Union[Pose, PoseStamped]):
         
+        if rospy.get_param('~pose_stamped'):
+            turtle_pose_msg = turtle_pose_msg.pose
         # SLAM output will be T_OR. Or Robot w.r.t. to Origin
         t = [turtle_pose_msg.position.x, 
              turtle_pose_msg.position.y, 
@@ -74,7 +77,7 @@ class AprilTagTracker(Mapping):
         self.T_RO[:3, :3] = r.T
         self.T_RO[:3, -1] = -(r.T) @ np.array(t)
 
-    def tag_update_callback(self, tag_detections):
+    def tag_update_callback(self, tag_detections: AprilTagDetection):
         
         for tag_detection in tag_detections.detections:
             tag_pose = tag_detection.pose.pose.pose
