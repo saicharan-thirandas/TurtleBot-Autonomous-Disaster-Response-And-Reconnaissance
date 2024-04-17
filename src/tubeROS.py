@@ -19,7 +19,13 @@ class TubeMPPIROSNode:
         self.current_pose = np.zeros(3) # x, y, theta
         self.update_goal_ = False
 
-        self.velocity_publisher = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        rospy.on_shutdown(self.shutdown)
+
+        self.velocity_publisher = rospy.Publisher(
+            '/cmd_vel', 
+            Twist, 
+            queue_size=10
+        )
         
         self.goal_subscriber = rospy.Subscriber(
             '/goal_update', 
@@ -71,6 +77,12 @@ class TubeMPPIROSNode:
         twist_msg.angular.y = 0.
         twist_msg.angular.z = desired_controls[1]
         self.velocity_publisher.publish(twist_msg)
+        self.update_goal_ = False
+    
+    def shutdown(self):
+        rospy.loginfo("Stopping TurtleBot")
+        self.velocity_publisher.publish(Twist())
+        rospy.sleep(1)
 
     def run(self):
         rospy.spin()
