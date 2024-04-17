@@ -6,9 +6,10 @@ import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose, PoseStamped
+from geometry_msgs.msg import Pose, PoseStamped, Twist
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
+from std_msgs.msg import Bool
 
 import os
 import sys
@@ -25,6 +26,8 @@ class Lidar(Mapping):
         self._init_map()
         self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
+        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(-10) or angle_rad <= np.deg2rad(10)
+        self.distance_threshold = 0.05
 
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
@@ -52,6 +55,12 @@ class Lidar(Mapping):
             callback=self.update_map
         )
 
+        self.goal_reset_publisher = rospy.Publisher(
+            name=rospy.get_param('~goal_reset'), 
+            data_class=Bool, 
+            queue_size=10
+        )
+
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
@@ -69,7 +78,9 @@ class Lidar(Mapping):
 
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
-        obs_pt_inds = super()._coords_to_grid_indicies(x, y, w, sign=1)
+        obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
+        narrow_pov_ranges = 0
+        narrow_pov_counts = 0
 
         for i in range(len(ranges)):
             # Get angle of range
@@ -86,7 +97,7 @@ class Lidar(Mapping):
             hit_x = x + np.cos(beam_angle_rad) * ranges[i]
             hit_y = y + np.sin(beam_angle_rad) * ranges[i]
 
-            hit_pt_inds  = super()._coords_to_grid_indicies(hit_x, hit_y, beam_angle_rad, sign=1)
+            hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
             free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
 
             self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
@@ -95,6 +106,16 @@ class Lidar(Mapping):
             if self.in_cam_pov(angle_rad):
                 self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
                 self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+
+            if self.narrow_cam_pov(angle_rad):
+                narrow_pov_ranges += ranges[i]
+                narrow_pov_counts += 1
+
+        # rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
+        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold:
+            reset = Bool()
+            reset.data = True
+            self.goal_reset_publisher.publish(reset)
 
         self.publish(
             input_grid=super()._log_odds_to_prob(
@@ -121,16 +142,16 @@ class Lidar(Mapping):
     def _init_occupancy_map(self, input_grid: np.ndarray):
 
         map_init = OccupancyGrid()
-        map_init.info.width  = self.grid_size_x
-        map_init.info.height = self.grid_size_y
-        map_init.info.resolution = self.grid_resolution
-        map_init.info.origin.position.x = self.grid_origin_x
-        map_init.info.origin.position.y = self.grid_origin_y
-        map_init.info.origin.position.z = 0
-        map_init.info.origin.orientation.x = 0
-        map_init.info.origin.orientation.y = 0
-        map_init.info.origin.orientation.z = 0
-        map_init.info.origin.orientation.w = 1
+        map_init.info.width  = np.array(self.grid_size_x, np.uint32)
+        map_init.info.height = np.array(self.grid_size_y, np.uint32)
+        map_init.info.resolution = np.array(self.grid_resolution, np.float32)
+        map_init.info.origin.position.x = float(self.grid_origin_x)
+        map_init.info.origin.position.y = float(self.grid_origin_y)
+        map_init.info.origin.position.z = 0.
+        map_init.info.origin.orientation.x = 0.
+        map_init.info.origin.orientation.y = 0.
+        map_init.info.origin.orientation.z = 0.
+        map_init.info.origin.orientation.w = 1.
         map_init.data = input_grid.flatten().astype(np.int8)
         return map_init
 
@@ -153,7 +174,7 @@ class GTSAM(Lidar):
 
         rospy.init_node('slam_node', anonymous=True)
         super(GTSAM, self).__init__()
-
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # TODO
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
         )
@@ -240,7 +261,7 @@ class GTSAM(Lidar):
     def add_odem_factors(self):
 
         assert self.current_pose_idx >= 1
-        rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
+        # rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
         odometry = gtsam.Pose2(self.dx, self.dy, self.dw)
 
         self.initial_estimate.insert(
@@ -248,7 +269,7 @@ class GTSAM(Lidar):
             self.initial_estimate.atPose2( X(self.current_pose_idx-1) ).compose(odometry)
         )
 
-        rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
+        # rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
         self.graph.add(
             gtsam.BetweenFactorPose2(
                 X(self.current_pose_idx-1), 
