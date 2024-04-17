@@ -119,14 +119,14 @@ class Lidar(Mapping):
 
         self.publish(
             input_grid=super()._log_odds_to_prob(
-                log_odds=self.occupancy_grid_logodds
+                log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
                 ) * 100, 
             cam_pub=self.occ_map_pub
         )
         
         self.publish(
             input_grid=super()._log_odds_to_prob(
-                log_odds=self.occupancy_grid_logodds_cam
+                log_odds=np.clip(self.occupancy_grid_logodds_cam, a_min=-15, a_max=15)
                 ) * 100,
             cam_pub=self.occ_map_pub_cam
         )
