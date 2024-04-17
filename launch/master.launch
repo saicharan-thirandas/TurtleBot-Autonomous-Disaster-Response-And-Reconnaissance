@@ -4,8 +4,7 @@
     <arg name="open_rviz" default="true"/>
     <arg name="multi_robot_name" default=""/>
     <arg name="launch_prefix" default="" />
-    <arg name="queue_size" default="10" />
-    <arg name="cmd_vel_topic" default="/cmd_vel" /> -->
+    <arg name="queue_size" default="10" /> -->
     
     <!-- Arguments -->
     <arg name="lidar_topic" default="/scan" />
@@ -20,6 +19,7 @@
     <arg name="track_topic" default="/tag_tracker"/>
     <arg name="goal_update" default="/goal_update"/> 
     <arg name="goal_reset" default="/goal_reset"/>
+    <arg name="cmd_vel_topic" default="/cmd_vel" />
 
 
     <!-- SLAM Node -->
@@ -31,6 +31,7 @@
         <param name="pose_topic" value="$(arg pose_topic)" /> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
         <param name="tags_topic" value="$(arg tags_topic)" /> 
+        <param name="goal_reset" value="$(arg goal_reset)" /> 
     </node>
 
     <!-- Tag Detection Node -->
@@ -59,6 +60,6 @@
     </node> 
 
     <!-- Navigation Node -->
-    <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node>
+    <!-- <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node> -->
 
 </launch>
