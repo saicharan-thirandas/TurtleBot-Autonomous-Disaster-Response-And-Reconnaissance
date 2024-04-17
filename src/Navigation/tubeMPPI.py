@@ -49,8 +49,8 @@ class TubeMPPIRacetrack:
 
     def get_action(self, x0):
         x0 = x0.squeeze()
-        if self.z is None:
-            self.z = x0
+        # if self.z is None:
+        self.z = x0
         z_traj, v = self.solve_nominal()
         self.ancillary.nominal_states = z_traj
         self.ancillary.nominal_actions = v
