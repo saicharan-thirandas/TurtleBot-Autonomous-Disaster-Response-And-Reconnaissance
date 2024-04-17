@@ -1,14 +1,14 @@
 import numpy as np
 from dataclasses import dataclass
-
+import rospy
 
 @dataclass
 class Grid:
-    grid_resolution = 0.1 # meters per grid cell
-    grid_size_x = 384  # number of grid cells in the x direction
-    grid_size_y = 384  # number of grid cells in the y direction
-    grid_origin_x = -10.0  # origin of the grid in the x direction
-    grid_origin_y = -10.0  # origin of the grid in the y direction
+    grid_resolution = 1/20 # meters per grid cell
+    grid_size_x = 400  # number of grid cells in the x direction
+    grid_size_y = 400  # number of grid cells in the y direction
+    grid_origin_x = 200  # origin of the grid in the x direction
+    grid_origin_y = 200  # origin of the grid in the y direction
 
 
 class Mapping(Grid):
@@ -33,23 +33,23 @@ class Mapping(Grid):
         self.log_odds_prior = self._prob_to_log_odds(p_prior)
 
         self.T = np.array([
-            [0, -1, self.grid_origin_x], 
-            [1,  0, self.grid_origin_y], 
-            [0,  0,                  1]
-        ]) * ( 1 / self.grid_resolution)
-    
+            [1/(self.grid_resolution), 0, self.grid_origin_x], 
+            [0, 1/(self.grid_resolution), self.grid_origin_y], 
+            [0,                        0,                  1]
+        ]) *1    
     def _log_odds_to_prob(self, log_odds: np.ndarray) -> np.ndarray:
         return 1 - 1 / (1e-6 + 1 + np.exp(log_odds))
 
     def _prob_to_log_odds(self, prob: np.ndarray) -> np.ndarray:
         return np.log(prob / (1e-6 + 1 - prob))
 
-    def _coords_to_grid_indicies(self, x, y, w, sign=1):
-        grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
-        grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
-        return np.array([grid_x, grid_y, int(w)])
+    # def _coords_to_grid_indicies(self, x, y, w, sign=1):
+    #     grid_x = int((x + sign * self.grid_origin_x) / self.grid_resolution)
+    #     grid_y = int((y + sign * self.grid_origin_y) / self.grid_resolution)
+    #     return np.array([grid_x, grid_y, int(w)])
     
     def _world_coordinates_to_map_indices(self, position_in_world):
+        position_in_world = np.array(position_in_world)
         position_in_world = position_in_world.reshape((-1, 2))
         column_ones = np.ones((position_in_world.shape[0], 1))
         position_homo = np.hstack([position_in_world, column_ones])
@@ -71,6 +71,6 @@ class Mapping(Grid):
         return in_map, grid_coords
         
     def _grid_indices_to_coords(self, grid_x, grid_y, w, sign=1):
-        x = grid_x * self.grid_resolution - sign * self.grid_origin_x
-        y = grid_y * self.grid_resolution - sign * self.grid_origin_y
-        return x, y, w
+        x = (grid_x - self.grid_origin_x)*self.grid_resolution
+        y = (grid_y - self.grid_origin_y)*self.grid_resolution
+        return x, y, 1

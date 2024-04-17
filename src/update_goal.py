@@ -146,17 +146,17 @@ class GoalUpdater(Mapping):
         while not rospy.is_shutdown():
             if self.reset_goal and hasattr(self, 'turtle_pose'):
                 turtle_pose = self.turtle_pose
-                cor_x, cor_y, _  = super()._coords_to_grid_indicies(*turtle_pose, sign=-1)
-                rospy.loginfo(f"Recieved a request to update the goal... current turtle coords: {turtle_pose}, grid: {cor_x, cor_x}")
+                cor_x, cor_y, _  = super()._world_coordinates_to_map_indices(turtle_pose[:2])
+                rospy.loginfo(f"Recieved a request to update the goal... current turtle pose: {turtle_pose}, grid coords: {cor_x, cor_y}")
                 turtle_grid_pose = np.array([cor_x, cor_y])
                 new_target_position, _, _, _ = self.find_goal_position(turtle_grid_pose, self.lidar_map, self.camera_map)
 
                 if new_target_position is not None:
                     # Get new Pose
                     yaw  = calculate_yaw(new_target_position[0], new_target_position[1], *turtle_pose[:2])
-                    new_target_position = super()._grid_indices_to_coords(*new_target_position, yaw, sign=1)
+                    new_target_position = super()._grid_indices_to_coords(*new_target_position, yaw, sign=-1)
                     pose = get_quat_pose(new_target_position[0], new_target_position[1], yaw, stamped=rospy.get_param('~pose_stamped'))
-                    rospy.loginfo(f"New pose: {pose}")
+                    rospy.loginfo(f"New target pose: {new_target_position}")
                     self.goal_publisher.publish(pose)
                     
                     # Do not reset goal

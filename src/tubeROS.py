@@ -43,7 +43,7 @@ class TubeMPPIROSNode:
         self.update_goal_ = True
         new_goal = np.array([msg.pose.position.x, msg.pose.position.y])
         self.path_planner.update_goal(new_goal)
-        rospy.loginfo(f"Updated goal to: {self.update_goal_} {new_goal}")
+        rospy.loginfo(f"Updated goal pose set to: {new_goal}")
 
     def map_callback(self, msg):
         grid = np.array(msg.data).reshape((msg.info.height, msg.info.width))
@@ -59,12 +59,17 @@ class TubeMPPIROSNode:
     def plan_and_execute(self):
         if not self.update_goal_:
             return
-        rospy.loginfo(f"PLANNING AND EXECUTING")
-        control_actions = self.path_planner.get_action(self.current_pose)
-        rospy.loginfo("Desired Controls: {}".format(control_actions))
+        rospy.loginfo(f"PLANNING AND EXECUTING...")
+        control_actions, _ = self.path_planner.get_action(self.current_pose)
+        desired_controls = control_actions[0]
+        rospy.loginfo(f"Desired Controls: {desired_controls[0], desired_controls[1]}")
         twist_msg = Twist()
-        twist_msg.linear.x  = control_actions[0][0]
-        twist_msg.angular.z = control_actions[0][1]
+        twist_msg.linear.x = desired_controls[0]
+        twist_msg.linear.y = 0.
+        twist_msg.linear.z = 0.
+        twist_msg.angular.x = 0.
+        twist_msg.angular.y = 0.
+        twist_msg.angular.z = desired_controls[1]
         self.velocity_publisher.publish(twist_msg)
 
     def run(self):

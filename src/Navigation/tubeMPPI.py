@@ -31,12 +31,11 @@ class TubeMPPIRacetrack:
         self.nominal.static_map = new_grid
 
     def simulate(self, x0, u):
-        xs = [x0.squeeze()]
+        xs = [x0]
         for i in range(len(u)):
             x1 = self.motion_model.step(xs[i].copy(), u[i].copy())
             xs.append(x1)
         xs = np.array(xs)
-        rospy.loginfo(f"XS SHAPE {xs.shape}")
         return xs
     
     def solve_ancillary(self, x):
@@ -49,6 +48,7 @@ class TubeMPPIRacetrack:
         return z_traj, v
 
     def get_action(self, x0):
+        x0 = x0.squeeze()
         if self.z is None:
             self.z = x0
         z_traj, v = self.solve_nominal()

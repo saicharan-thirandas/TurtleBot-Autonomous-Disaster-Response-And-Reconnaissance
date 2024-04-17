@@ -24,8 +24,10 @@ class MPPIRacetrack(Mapping):
 
         self.motion_model = motion_model
         self.action_limits = np.vstack(
-            [np.array([0., -2*np.pi]), 
-             np.array([5, 2*np.pi])]
+            [
+                np.array([0., -2*np.pi]), 
+                np.array([.5,  2*np.pi])
+            ]
         )
 
         self.static_map = static_map
@@ -107,7 +109,7 @@ class MPPIRacetrack(Mapping):
             for t in range(self.num_steps_per_rollout):
                 states[:, t + 1, :] = self.motion_model.step(
                     states[:, t, :], actions[:, t, :]
-                )[:, None, :]
+                )
 
             scores = self.score_rollouts(states, actions)
 
