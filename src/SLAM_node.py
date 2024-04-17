@@ -28,6 +28,7 @@ class Lidar(Mapping):
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
         self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(-10) or angle_rad <= np.deg2rad(10)
         self.distance_threshold = 0.05
+        #self.occupancy_grid_logodds_cam_filter[:, :] = 0
 
         # Subscribe to odometry
         self.lidar_sub = rospy.Subscriber(
@@ -81,6 +82,7 @@ class Lidar(Mapping):
         obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
         narrow_pov_ranges = 0
         narrow_pov_counts = 0
+        
 
         for i in range(len(ranges)):
             # Get angle of range
@@ -104,8 +106,10 @@ class Lidar(Mapping):
             self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
 
             if self.in_cam_pov(angle_rad):
-                self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-                self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+                self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
+                self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]]  = 1
+                self.occupancy_grid_logodds_cam =  [[self.occupancy_grid_logodds[i][j] if self.occupancy_grid_logodds_cam_filter[i][j] == 1 else 0 for j in range(len(self.occupancy_grid_logodds[0]))] for i in range(len(self.occupancy_grid_logodds))]
+                #print("test")
 
             if self.narrow_cam_pov(angle_rad):
                 narrow_pov_ranges += ranges[i]

@@ -27,7 +27,10 @@ class Mapping(Grid):
             self.grid_size_x, 
             self.grid_size_y
         ))
-        
+        self.occupancy_grid_logodds_cam_filter = np.zeros((
+            self.grid_size_x, 
+            self.grid_size_y
+        ))
         self.log_odds_free  = self._prob_to_log_odds(p_free)
         self.log_odds_occ   = self._prob_to_log_odds(p_occ)
         self.log_odds_prior = self._prob_to_log_odds(p_prior)
