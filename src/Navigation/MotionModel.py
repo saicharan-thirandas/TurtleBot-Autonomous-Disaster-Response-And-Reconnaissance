@@ -14,35 +14,39 @@ class MotionModel:
         raise NotImplementedError
 
 class Unicycle(MotionModel):
-    """Discrete-time unicycle kinematic model integrated with ROS for 2D robot simulation."""
-    
+    """Discrete-time unicycle kinematic model for 2D robot simulator."""
+
     def __init__(self, v_min=0, v_max=1, w_min=-2 * np.pi, w_max=2 * np.pi):
-        self.v_min = v_min
-        self.v_max = v_max
-        self.w_min = w_min
-        self.w_max = w_max
-        super(Unicycle, self).__init__()
-    
-    def step(self, current_pose, velocity_cmd, dt=0.1):
-        # Extract current state
-        x, y, theta = current_pose.position.x, current_pose.position.y, current_pose.orientation.z
-        
-        # Extract commands
-        vx = max(min(velocity_cmd.linear.x, self.v_max), self.v_min)
-        vw = max(min(velocity_cmd.angular.z, self.w_max), self.w_min)
-        
-        # Compute next state
-        x_next = x + vx * np.cos(theta) * dt
-        y_next = y + vx * np.sin(theta) * dt
-        theta_next = theta + vw * dt
-        
-        # Update pose
-        next_pose = Pose()
-        next_pose.position.x = x_next
-        next_pose.position.y = y_next
-        next_pose.orientation.z = theta_next
-        
-        return next_pose
+        super().__init__()
+
+    def step(
+        self, current_state: np.ndarray, action: np.ndarray, dt: float = 0.1
+    ) -> np.ndarray:
+        """Move 1 timestep forward w/ kinematic model, x_{t+1} = f(x_t, u_t)"""
+        # current_state = np.array([x, y, theta])
+        # action = np.array([vx, vw])
+
+        # clip the action to be within the control limits
+        clipped_action = np.clip(
+            action, np.array([0, -2*np.pi]), np.array([0.5, 2*np.pi])
+        )
+
+        current_state = current_state.reshape((-1, 3))
+        clipped_action = clipped_action.reshape((-1, 2))
+        next_state = np.empty_like(current_state)
+
+        next_state[:, 0] = current_state[:, 0] + dt * clipped_action[
+            :, 0
+        ] * np.cos(current_state[:, 2])
+        next_state[:, 1] = current_state[:, 1] + dt * clipped_action[
+            :, 0
+        ] * np.sin(current_state[:, 2])
+        next_state[:, 2] = current_state[:, 2] + dt * clipped_action[:, 1]
+
+        next_state = next_state.squeeze()
+
+        return next_state
+
 
 class NoisyUnicycle(Unicycle):
     """Unicycle model with added process noise, integrated with ROS."""

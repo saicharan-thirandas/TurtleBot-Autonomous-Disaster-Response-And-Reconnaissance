@@ -85,7 +85,7 @@ class AprilTagTracker(Mapping):
             T_OA = self.T_OR @ T_RC @ T_CA
             x, y = T_OA[:2, -1]
 
-            occ_x, occ_y, _  = super()._coords_to_grid_indicies(x, y, w=0, sign=-1)
+            occ_x, occ_y, _  = super()._world_coordinates_to_map_indices([x, y])
             occ_map_location = (occ_x, occ_y)
 
             self.unique_tags[occ_map_location] = T_OA

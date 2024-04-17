@@ -1,10 +1,12 @@
 import numpy as np
-from MotionModel import Unicycle 
+from MotionModel import Unicycle
+import rospy
+
+
 #@title Iterative LQR
 class AncillaryILQG:
   def __init__(self,
                waypoint = None,
-               static_map = None,  
                max_iter = 100,
                x0 = np.zeros(3),
                num_states = 3,
@@ -28,7 +30,6 @@ class AncillaryILQG:
     self.lmbd_max = 1000.0
     self.nominal_states = None
     self.nominal_actions = None
-    self.static_map = static_map
     self.waypoint = waypoint
 
   def ilqg(self, x0, target):
@@ -73,6 +74,7 @@ class AncillaryILQG:
       u_new = np.zeros((self.K, self.num_actions))
       x_new = x0.copy()
       for t in range(self.K - 1):
+        # rospy.loginfo(f"SHAPES: {u[t].shape}, {k[t].shape}, {x_traj[t].shape}, {K[t].shape}, {x_new.shape}, {x_traj[t].shape}")
         u_new[t] = u[t] + k[t] + np.dot(K[t], x_new - x_traj[t])
         _, x_new = self.motion_model_step(x_new, u_new[t])
 
