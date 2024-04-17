@@ -58,8 +58,10 @@
         <param name="pose_topic" value="$(arg pose_topic)" /> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
     </node> 
-
+    
     <!-- Navigation Node -->
-    <!-- <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> </node> -->
+    <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> 
+        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+    </node>
 
 </launch>

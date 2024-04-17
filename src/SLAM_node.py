@@ -111,7 +111,7 @@ class Lidar(Mapping):
                 narrow_pov_ranges += ranges[i]
                 narrow_pov_counts += 1
 
-        rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
+        # rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
         if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold:
             reset = Bool()
             reset.data = True
@@ -174,7 +174,7 @@ class GTSAM(Lidar):
 
         rospy.init_node('slam_node', anonymous=True)
         super(GTSAM, self).__init__()
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # TODO
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
         )
@@ -190,6 +190,13 @@ class GTSAM(Lidar):
         # Publish predicted pose
         self.pose_pub = rospy.Publisher(
             name=rospy.get_param('~pose_topic'),
+            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
+            queue_size=10
+        )
+
+        # Publish goal update pose
+        self.pose_pub_goal = rospy.Publisher(
+            name='/goal_update',
             data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
             queue_size=10
         )
@@ -293,8 +300,9 @@ class GTSAM(Lidar):
         curr_pose = result.atPose2( X(self.current_pose_idx) )
         pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
+        self.pose_pub_goal.publish(pose_msg)
         self.current_pose_idx += 1
-        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
+        # rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
         
     def run(self):
 

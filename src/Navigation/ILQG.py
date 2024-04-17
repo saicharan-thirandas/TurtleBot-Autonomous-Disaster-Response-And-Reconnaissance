@@ -4,7 +4,6 @@ from MotionModel import Unicycle
 class AncillaryILQG:
   def __init__(self,
                waypoint = None,
-               static_map = None,  
                max_iter = 100,
                x0 = np.zeros(3),
                num_states = 3,
@@ -28,7 +27,6 @@ class AncillaryILQG:
     self.lmbd_max = 1000.0
     self.nominal_states = None
     self.nominal_actions = None
-    self.static_map = static_map
     self.waypoint = waypoint
 
   def ilqg(self, x0, target):
