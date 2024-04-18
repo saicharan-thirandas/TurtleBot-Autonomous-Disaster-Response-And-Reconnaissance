@@ -11,7 +11,7 @@ from MotionModel import Unicycle
 from MPPI import MPPIRacetrack
 
 class TubeMPPIRacetrack:
-    def __init__(self, static_map=None, num_timesteps=20):
+    def __init__(self, static_map=None, num_timesteps=12):
         
         # MPPI Racetrack to score MPPI
         self.nominal = MPPIRacetrack(static_map=static_map, num_steps_per_rollout=num_timesteps)
@@ -47,9 +47,8 @@ class TubeMPPIRacetrack:
         z_traj = self.simulate(self.z, v) # [1, 3], [20, 2]
         return z_traj, v
 
-    def get_action(self, x0):
+    def get_controls(self, x0):
         x0 = x0.squeeze()
-        # if self.z is None:
         self.z = x0
         z_traj, v = self.solve_nominal()
         self.ancillary.nominal_states = z_traj

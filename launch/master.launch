@@ -32,6 +32,7 @@
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
         <param name="tags_topic" value="$(arg tags_topic)" /> 
         <param name="goal_reset" value="$(arg goal_reset)" /> 
+        <param name="goal_update" value="$(arg goal_update)" /> 
     </node>
 
     <!-- Tag Detection Node -->

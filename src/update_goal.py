@@ -90,14 +90,13 @@ class GoalUpdater(Mapping):
 
     def goal_reset_callback(self, msg):
         self.reset_goal = msg.data
-        rospy.loginfo(f"Reset the goal: {self.reset_goal}")
 
     def filter_frontier(self , image):
         _, thresholded = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
         inverted = cv2.bitwise_not(thresholded)        
         return inverted
     
-    def find_closest_pixel(self, current_position, diff_image):
+    def find_closest_pixel(self, current_position, diff_image, lidar_map):
         """ 
         Given the current position in the occupancy map and the 
         occupancy map corresponding to the ~camera_pov...
@@ -120,6 +119,39 @@ class GoalUpdater(Mapping):
         
         return closest_pixel.astype(int)  # Return as integer coordinates
     
+    def find_closest_pixel_(self, current_position, diff_image, lidar_map):
+        """ 
+        Given the current position in the occupancy map and the 
+        occupancy map corresponding to the ~camera_pov...
+        """
+
+        # In diff_image, the white pixels are the fronties outside the camera's pov
+        non_black_pixels_indices = np.argwhere(diff_image > 10)
+        if len(non_black_pixels_indices) == 0:
+            return None
+        
+        # Randomly sample 10% of non-black pixels
+        num_samples = max(1, len(non_black_pixels_indices) // 10)  # Ensure at least one sample
+        sampled_indices = np.random.choice(len(non_black_pixels_indices), num_samples, replace=False)
+        sampled_pixels = non_black_pixels_indices[sampled_indices]
+        
+        sampled_pixels = np.float32(sampled_pixels)
+        distances = np.linalg.norm(sampled_pixels - current_position, axis=1)
+
+        # Find the closest pixel not present in lidar_map
+        min_distance = np.inf
+        closest_pixel = None
+        for i, pixel in enumerate(sampled_pixels):
+            if tuple(pixel) not in lidar_map:  # Check if pixel is not present in lidar_map
+                if distances[i] < min_distance:
+                    min_distance = distances[i]
+                    closest_pixel = pixel
+        
+        if closest_pixel is None:
+            return None  # Return None if all sampled pixels are present in lidar_map
+
+        return closest_pixel.astype(int)  # Return as integer coordinates
+
     def find_goal_position(self, current_position, lidar_map, camera_map):
         """ 
         Given the turtle's position in the occupancy map, occupancy map from the
@@ -132,7 +164,7 @@ class GoalUpdater(Mapping):
         diff_image = cv2.absdiff(filtered_image1, filtered_image2)
         diff_image = cv2.bitwise_xor(filtered_image1, filtered_image2)
         
-        closest_pixel = self.find_closest_pixel(current_position, diff_image)
+        closest_pixel = self.find_closest_pixel(current_position, diff_image, filtered_image1)
         new_target_position = closest_pixel if closest_pixel is not None else None
 
         return new_target_position, filtered_image1, filtered_image2, diff_image
@@ -154,9 +186,9 @@ class GoalUpdater(Mapping):
                 if new_target_position is not None:
                     # Get new Pose
                     yaw  = calculate_yaw(new_target_position[0], new_target_position[1], *turtle_pose[:2])
-                    new_target_position = super()._grid_indices_to_coords(*new_target_position, yaw, sign=-1)
-                    pose = get_quat_pose(new_target_position[0], new_target_position[1], yaw, stamped=rospy.get_param('~pose_stamped'))
-                    rospy.loginfo(f"New target pose: {new_target_position}")
+                    new_target_coords = super()._grid_indices_to_coords(*new_target_position, yaw, sign=-1)
+                    pose = get_quat_pose(new_target_coords[0], new_target_coords[1], yaw, stamped=rospy.get_param('~pose_stamped'))
+                    rospy.loginfo(f"NEW TARGET POSE: {new_target_coords}, NEW TARGET COORDS: {new_target_position}")
                     self.goal_publisher.publish(pose)
                     
                     # Do not reset goal
@@ -170,6 +202,5 @@ if __name__ == '__main__':
     try:
         goal_updater=GoalUpdater()
         goal_updater.main()
-        #data recieved is None
     except rospy.ROSInterruptException:
         pass

@@ -10,6 +10,7 @@ from geometry_msgs.msg import Pose, PoseStamped, Twist
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 from std_msgs.msg import Bool
+import time
 
 import os
 import sys
@@ -24,18 +25,10 @@ class Lidar(Mapping):
 
         super(Lidar, self).__init__()
         self._init_map()
-        self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
-        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(-10) or angle_rad <= np.deg2rad(10)
-        self.distance_threshold = 0.05
-        #self.occupancy_grid_logodds_cam_filter[:, :] = 0
-
-        # Subscribe to odometry
-        self.lidar_sub = rospy.Subscriber(
-            name=rospy.get_param('~odom_topic'), 
-            data_class=Odometry, 
-            callback=self.update_odom
-        )
+        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(355) or angle_rad <= np.deg2rad(5)
+        self.distance_threshold = 0.85
+        self.count = 10
 
         self.occ_map_pub = rospy.Publisher(
             name=rospy.get_param('~occupancy_map_topic'),
@@ -61,39 +54,50 @@ class Lidar(Mapping):
             data_class=Bool, 
             queue_size=10
         )
+ 
+        rospy.Subscriber(
+            name=rospy.get_param('~goal_update'),
+            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
+            callback=self.goal_pose_callback,
+            queue_size=10
+        )
 
+        self.cmd_vel = rospy.Publisher(
+            '/cmd_vel', 
+            Twist, 
+            queue_size=10
+        )
+ 
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
         diff = hit_pt_inds - obs_pt_inds
         j = np.argmax( np.abs(diff) )
         D = np.abs( diff[j] )
         return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
     
-    def update_odom(self, odom_msg):
+    def _update_pose(self, odom_msg):
+        """ Update current pose using odometry """
         self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
-        twist_msg = odom_msg.twist.twist
-        self.dx += twist_msg.linear.x
-        self.dy += twist_msg.linear.y
-        self.dw += twist_msg.angular.z
+        # rospy.loginfo(f"ODOM CURRENT POSE: {self.current_pose}")
 
     def update_map(self, lidar_msg):
 
+        lidar_start = time.time()
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
         obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
-        narrow_pov_ranges = 0
+        narrow_pov_ranges = 0.0001
         narrow_pov_counts = 0
-        
 
         for i in range(len(ranges)):
             # Get angle of range
             angle_rad = i * lidar_msg.angle_increment
             beam_angle_rad = w + angle_rad
+            
+            if ranges[i] == np.inf:
+                ranges[i] = 1.2
 
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
                 continue
-
-            # if ranges[i] == np.inf:
-            #     ranges[i] = 3.5
 
             # Get x,y position of laser beam in the map
             hit_x = x + np.cos(beam_angle_rad) * ranges[i]
@@ -108,18 +112,28 @@ class Lidar(Mapping):
             if self.in_cam_pov(angle_rad):
                 self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
                 self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]]  = 1
-                self.occupancy_grid_logodds_cam =  [[self.occupancy_grid_logodds[i][j] if self.occupancy_grid_logodds_cam_filter[i][j] == 1 else 0 for j in range(len(self.occupancy_grid_logodds[0]))] for i in range(len(self.occupancy_grid_logodds))]
-                #print("test")
 
             if self.narrow_cam_pov(angle_rad):
                 narrow_pov_ranges += ranges[i]
                 narrow_pov_counts += 1
+                
+        # If something is close to the cam and our goal distance is getting close
+        if (narrow_pov_ranges / (narrow_pov_counts + 1e-9)) < self.distance_threshold and self.goal_distance() < 0.35:
+            rospy.loginfo("CLOSE TO WALL AND REACHED THE GOAL...GOAL RESET")
+            self._reset_goal()
 
-        # rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
-        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold:
-            reset = Bool()
-            reset.data = True
-            self.goal_reset_publisher.publish(reset)
+        # Outside the for loop
+        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold :
+            self.count -=1
+            if self.count <=1:
+                rospy.loginfo("CLOSE TO WALL...GETTING STUCK...GOAL RESET")
+                self.count=10
+                self._reset_goal(False)
+        
+        # We have reached the goal
+        if self.goal_distance() < 0.35:
+            rospy.loginfo("CLOSE TO GOAL...GOAL RESET")
+            self._reset_goal()
 
         self.publish(
             input_grid=super()._log_odds_to_prob(
@@ -128,12 +142,21 @@ class Lidar(Mapping):
             cam_pub=self.occ_map_pub
         )
         
+        end_time = time.time() - lidar_start
         self.publish(
-            input_grid=super()._log_odds_to_prob(
-                log_odds=np.clip(self.occupancy_grid_logodds_cam, a_min=-15, a_max=15)
+            input_grid=self.occupancy_grid_logodds_cam_filter * super()._log_odds_to_prob(
+                log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
                 ) * 100,
             cam_pub=self.occ_map_pub_cam
         )
+        # rospy.loginfo(f"LIDAR MAP GENERATION AND PUBLISHING TOOK: {end_time}, {time.time() - lidar_start}")
+    
+    def _reset_goal(self, stop: bool=True):
+        reset = Bool()
+        reset.data = True
+        self.goal_reset_publisher.publish(reset)
+        if stop:
+            self.cmd_vel.publish(Twist())
 
     def _init_map(self):
 
@@ -169,6 +192,21 @@ class Lidar(Mapping):
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
         cam_pub.publish(map_update)
+ 
+    def goal_pose_callback(self, pose_msg):
+        if rospy.get_param('~pose_stamped'):
+            pose_msg = pose_msg.pose
+        self.goal_pose = get_matrix_pose_from_quat(pose_msg, return_matrix=False) # [x, y, yaw]
+ 
+    def goal_distance(self):
+        if hasattr(self, 'goal_pose') and hasattr(self, 'current_pose'):
+            xc, yc, _ = self.current_pose
+            xg, yg, _ = self.goal_pose
+        # Calculate Euclidean distance between the turtle and the goal
+            distance = np.sqrt((xc - xg) ** 2 + (yc - yg) ** 2)
+            return distance
+        else:
+            return np.inf
 
 
 class GTSAM(Lidar):
@@ -177,8 +215,17 @@ class GTSAM(Lidar):
     def __init__(self):
 
         rospy.init_node('slam_node', anonymous=True)
+        self.dx, self.dy, self.dw = [0., 0., 0.]
+
+        # Subscribe to odometry
+        self.odom_sub = rospy.Subscriber(
+            name=rospy.get_param('~odom_topic'), 
+            data_class=Odometry, 
+            callback=self.update_odom
+        )
+
         super(GTSAM, self).__init__()
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # TODO
+
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
         )
@@ -224,6 +271,14 @@ class GTSAM(Lidar):
         self.graph.add(priorFactor)
         self.initial_estimate.insert(X(self.current_pose_idx), priorMean)
 
+    def update_odom(self, odom_msg):
+        """ Using odom message, will update current pose and dx, dy, dw """
+        super()._update_pose(odom_msg)
+        twist_msg = odom_msg.twist.twist
+        self.dx += twist_msg.linear.x
+        self.dy += twist_msg.linear.y
+        self.dw += twist_msg.angular.z
+
     def add_tag_factors(self, apriltag_msg):
         
         added_factors = False
@@ -242,30 +297,9 @@ class GTSAM(Lidar):
             self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose_idx), L(tag_id), relative_pose, self.apriltag_noise))
         rospy.loginfo(f"ADDED TAG FACTORS: {added_factors}")
 
-    def add_grid_factors(self):
-
-        # TODO: Create occupancy grid factors for GTSAM. Is this needed?
-        grid_factors = []
-        for x in range(self.grid_size_x):
-            for y in range(self.grid_size_y):
-                if self.occupancy_grid[x, y] != 0:  # TODO: What should the conditional be to use occupied cells?
-                    # Create factor for occupied cell
-                    factor = gtsam.RangeFactor(
-                        1,  # TODO: Use a shorthand variable
-                        gtsam.Point2((self.grid_origin_x + x * self.grid_resolution), (self.grid_origin_y + y * self.grid_resolution)),
-                        1.0,  # Range (distance to obstacle)
-                        self.occupancy_noise
-                    )
-                    grid_factors.append(factor)
-
-        # Add occupancy grid factors to the factor graph
-        for factor in grid_factors:
-            self.graph.add(factor)
-
     def add_odem_factors(self):
 
         assert self.current_pose_idx >= 1
-        # rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
         odometry = gtsam.Pose2(self.dx, self.dy, self.dw)
 
         self.initial_estimate.insert(
@@ -273,7 +307,6 @@ class GTSAM(Lidar):
             self.initial_estimate.atPose2( X(self.current_pose_idx-1) ).compose(odometry)
         )
 
-        # rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
         self.graph.add(
             gtsam.BetweenFactorPose2(
                 X(self.current_pose_idx-1), 
@@ -294,23 +327,35 @@ class GTSAM(Lidar):
     
     def publish_poses(self, result):
 
+        start = time.time()
         curr_pose = result.atPose2( X(self.current_pose_idx) )
         pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
-        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
+        # rospy.loginfo(f"PUBLISHING SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}, took {time.time() - start}")
+
+    def run_SLAM(self):
+
+        time_slam_start = time.time()
+        self.add_odem_factors()
+        result, _ = self.optimize()
+        # rospy.loginfo(f"SLAM TOOK: {time.time() - time_slam_start}")
+        return result
         
     def run(self):
 
-        rate = rospy.Rate(1)  # 1 Hz
+        rate = rospy.Rate(5)  # 1 Hz
         self._initialize_graph()
         result, _ = self.optimize()
         self.publish_poses(result)
+        # time_interval = 1
+        # time_start = time.time()
         while not rospy.is_shutdown():
-            self.add_odem_factors()
-            # add_grid_factors(...)?
-            result, _ = self.optimize()
+            # if time.time() - time_start >= time_interval:
+            # rospy.loginfo(f"RUNNING SLAM...")
+            result = self.run_SLAM()
             self.publish_poses(result)
+            # time_start = time.time()
             rate.sleep()
 
 if __name__ == '__main__':
