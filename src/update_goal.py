@@ -15,6 +15,7 @@ import sys
 sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_matrix_pose_from_quat, get_quat_pose, calculate_yaw
 from mapping import Mapping
+import matplotlib.pyplot as plt
 
 
 class GoalUpdater(Mapping):
@@ -172,6 +173,29 @@ class GoalUpdater(Mapping):
     def create_pose_msg(x, y, yaw):
         return get_quat_pose(x, y, yaw, stamped=rospy.get_param('~pose_stamped'))
     
+    def display_pose_and_goal(self,filtered_image1,filtered_image2,diff_image , image1_with_positions , current_position,new_target_position):
+        
+        cv2.circle(image1_with_positions, (current_position[1], current_position[0]), 5, (0, 0, 255), -1)  # Red circle for current position
+        if new_target_position is not None:
+            cv2.circle(image1_with_positions, (new_target_position[1], new_target_position[0]), 5, (0, 255, 0), -1)  # Green circle for final position
+        
+        # Display both filtered images side by side
+        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
+        axes[0].imshow(filtered_image1, cmap='gray')
+        axes[0].set_title("Current Lidar Map")
+        axes[0].axis('off')
+        axes[1].imshow(filtered_image2, cmap='gray')
+        axes[1].set_title("Frontier seen by Camera")
+        axes[1].axis('off')
+        axes[2].imshow(diff_image, cmap='gray')
+        axes[2].set_title("Frontier to explore")
+        axes[2].axis('off')
+        axes[3].imshow(cv2.cvtColor(image1_with_positions, cv2.COLOR_BGR2RGB))
+        axes[3].set_title("Current - Red vs Goal - Green ")
+        axes[3].axis('off')
+        plt.show()
+    
+
     def main(self):
         rate = rospy.Rate(1)
 
@@ -181,10 +205,11 @@ class GoalUpdater(Mapping):
                 cor_x, cor_y, _  = super()._world_coordinates_to_map_indices(turtle_pose[:2])
                 rospy.loginfo(f"Recieved a request to update the goal... current turtle pose: {turtle_pose}, grid coords: {cor_x, cor_y}")
                 turtle_grid_pose = np.array([cor_x, cor_y])
-                new_target_position, _, _, _ = self.find_goal_position(turtle_grid_pose, self.lidar_map, self.camera_map)
-
+                new_target_position, _f1, _f2, _d  = self.find_goal_position(turtle_grid_pose, self.lidar_map, self.camera_map)
+                #_f1, _f2, _d = self.lidar_map, self.camera_map ,self.lidar_map
                 if new_target_position is not None:
                     # Get new Pose
+                    self.display_pose_and_goal(_f1, _f2, _d ,  self.lidar_map , turtle_grid_pose,new_target_position)
                     yaw  = calculate_yaw(new_target_position[0], new_target_position[1], *turtle_pose[:2])
                     new_target_coords = super()._grid_indices_to_coords(*new_target_position, yaw, sign=-1)
                     pose = get_quat_pose(new_target_coords[0], new_target_coords[1], yaw, stamped=rospy.get_param('~pose_stamped'))
