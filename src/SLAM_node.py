@@ -77,11 +77,9 @@ class Lidar(Mapping):
     def _update_pose(self, odom_msg):
         """ Update current pose using odometry """
         self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
-        # rospy.loginfo(f"ODOM CURRENT POSE: {self.current_pose}")
 
     def update_map(self, lidar_msg):
 
-        lidar_start = time.time()
         ranges = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
         obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
@@ -93,8 +91,10 @@ class Lidar(Mapping):
             angle_rad = i * lidar_msg.angle_increment
             beam_angle_rad = w + angle_rad
             
-            if ranges[i] == np.inf:
-                ranges[i] = 1.2
+            #if ranges[i] == np.inf:
+             #   ranges[i] = 1.2
+            # @SAI, This need to be commented out, else Lidar publishing is too slow and we get bad results
+            # Maybe try to figure out how to get frontiers using xor in cv2 with just the 2 maps and with continue if == np.inf
 
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
                 continue
@@ -117,18 +117,19 @@ class Lidar(Mapping):
                 narrow_pov_ranges += ranges[i]
                 narrow_pov_counts += 1
                 
-        # If something is close to the cam and our goal distance is getting close
-        if (narrow_pov_ranges / (narrow_pov_counts + 1e-9)) < self.distance_threshold and self.goal_distance() < 0.35:
-            rospy.loginfo("CLOSE TO WALL AND REACHED THE GOAL...GOAL RESET")
-            self._reset_goal()
+        if narrow_pov_counts > 0:
+            # If something is close to the cam and our goal distance is getting close
+            if (narrow_pov_ranges / (narrow_pov_counts + 1e-9)) < self.distance_threshold and self.goal_distance() < 0.35:
+                rospy.loginfo("CLOSE TO WALL AND REACHED THE GOAL...GOAL RESET")
+                self._reset_goal()
 
-        # Outside the for loop
-        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold :
-            self.count -=1
-            if self.count <=1:
-                rospy.loginfo("CLOSE TO WALL...GETTING STUCK...GOAL RESET")
-                self.count=10
-                self._reset_goal(False)
+            # Outside the for loop
+            if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold :
+                self.count -=1
+                if self.count <=1:
+                    rospy.loginfo("CLOSE TO WALL...GETTING STUCK...GOAL RESET")
+                    self.count=10
+                    self._reset_goal(False)
         
         # We have reached the goal
         if self.goal_distance() < 0.35:
@@ -142,14 +143,12 @@ class Lidar(Mapping):
             cam_pub=self.occ_map_pub
         )
         
-        end_time = time.time() - lidar_start
         self.publish(
             input_grid=self.occupancy_grid_logodds_cam_filter * super()._log_odds_to_prob(
                 log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
                 ) * 100,
             cam_pub=self.occ_map_pub_cam
         )
-        # rospy.loginfo(f"LIDAR MAP GENERATION AND PUBLISHING TOOK: {end_time}, {time.time() - lidar_start}")
     
     def _reset_goal(self, stop: bool=True):
         reset = Bool()
@@ -322,24 +321,21 @@ class GTSAM(Lidar):
         params = gtsam.LevenbergMarquardtParams()
         optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial_estimate, params)
         result = optimizer.optimize()
-        marginals = gtsam.Marginals(self.graph, result)
-        return result, marginals
+        # marginals = gtsam.Marginals(self.graph, result)
+        return result, None
     
     def publish_poses(self, result):
 
-        start = time.time()
-        curr_pose = result.atPose2( X(self.current_pose_idx) )
-        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
+        current_pose = result.atPose2( X(self.current_pose_idx) )
+        x, y, w = current_pose.x(), current_pose.y(), current_pose.theta()
+        pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped')) # @SAI I am cheating here... it appears SLAM is suboptimal
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
-        # rospy.loginfo(f"PUBLISHING SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}, took {time.time() - start}")
 
     def run_SLAM(self):
 
-        time_slam_start = time.time()
         self.add_odem_factors()
         result, _ = self.optimize()
-        # rospy.loginfo(f"SLAM TOOK: {time.time() - time_slam_start}")
         return result
         
     def run(self):
@@ -348,14 +344,9 @@ class GTSAM(Lidar):
         self._initialize_graph()
         result, _ = self.optimize()
         self.publish_poses(result)
-        # time_interval = 1
-        # time_start = time.time()
         while not rospy.is_shutdown():
-            # if time.time() - time_start >= time_interval:
-            # rospy.loginfo(f"RUNNING SLAM...")
             result = self.run_SLAM()
             self.publish_poses(result)
-            # time_start = time.time()
             rate.sleep()
 
 if __name__ == '__main__':

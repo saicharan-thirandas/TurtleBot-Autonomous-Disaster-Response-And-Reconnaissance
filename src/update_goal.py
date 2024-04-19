@@ -23,6 +23,7 @@ class GoalUpdater(Mapping):
         super(GoalUpdater, self).__init__()
         rospy.init_node('update_goal', anonymous=True)
         self.reset_goal = False
+        cv2.namedWindow("Frontiers")
 
         rospy.Subscriber(
             name=rospy.get_param('~occupancy_map_topic'),
@@ -71,8 +72,7 @@ class GoalUpdater(Mapping):
         map_data = data.data
 
         map_array = np.array(map_data).reshape((height, width))
-        image = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        self.lidar_map = image
+        self.lidar_map = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
     
     def occupancy_grid_callback_camera(self, data):
         # Extracting map data from OccupancyGrid message
@@ -81,8 +81,7 @@ class GoalUpdater(Mapping):
         map_data = data.data
 
         map_array = np.array(map_data).reshape((height, width))
-        image = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        self.camera_map = image
+        self.camera_map = cv2.normalize(map_array, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
     
     def turtle_pose_callback(self, pose_msg):
         if rospy.get_param('~pose_stamped'):
@@ -92,110 +91,72 @@ class GoalUpdater(Mapping):
     def goal_reset_callback(self, msg):
         self.reset_goal = msg.data
 
-    def filter_frontier(self , image):
-        _, thresholded = cv2.threshold(image, 100, 255, cv2.THRESH_BINARY)
-        inverted = cv2.bitwise_not(thresholded)        
-        return inverted
+    def filter_frontier(self, image):
+        _, img_thesholded = cv2.threshold(image, thresh=180, maxval=255, type=cv2.THRESH_BINARY_INV)
+        return img_thesholded
     
-    def find_closest_pixel(self, current_position, diff_image, lidar_map):
+    def find_next_pixel(self, current_position, diff_image, lidar_map):
         """ 
         Given the current position in the occupancy map and the 
         occupancy map corresponding to the ~camera_pov...
         """
 
-        # In diff_image, the white pixels are the fronties outside the camera's pov
-        non_black_pixels_indices = np.argwhere(diff_image > 10)
-        if len(non_black_pixels_indices) == 0:
+        # In diff_image, the white pixels are the walls outside the camera's pov
+        white_pixels_indices = np.argwhere(diff_image > 200)
+        if len(white_pixels_indices) == 0:
             return None
         
-        # Randomly sample 10% of non-black pixels
-        num_samples = max(1, len(non_black_pixels_indices) // 10)  # Ensure at least one sample
-        sampled_indices = np.random.choice(len(non_black_pixels_indices), num_samples, replace=False)
-        sampled_pixels = non_black_pixels_indices[sampled_indices]
-        
-        sampled_pixels = np.float32(sampled_pixels)
+        # Randomly sample n% of white pixels
+        num_samples = max(1, int(len(white_pixels_indices) // 20))  # Ensure at least one sample
+        sampled_indices = np.random.choice(len(white_pixels_indices), num_samples, replace=False)
+        sampled_pixels = white_pixels_indices[sampled_indices].astype(np.float32)
+
         distances = np.linalg.norm(sampled_pixels - current_position, axis=1)
-        min_distance_index = np.argmin(distances)        
-        closest_pixel = sampled_pixels[min_distance_index]
+        index = np.argsort(distances)[int(len(distances) // 2)]
+        # index = np.argmin(distances)
+        closest_pixel = sampled_pixels[index]
         
-        return closest_pixel.astype(int)  # Return as integer coordinates
-    
-    def find_closest_pixel_(self, current_position, diff_image, lidar_map):
-        """ 
-        Given the current position in the occupancy map and the 
-        occupancy map corresponding to the ~camera_pov...
-        """
+        return closest_pixel.astype(int), sampled_pixels.astype(int)  # Return as integer coordinates
 
-        # In diff_image, the white pixels are the fronties outside the camera's pov
-        non_black_pixels_indices = np.argwhere(diff_image > 10)
-        if len(non_black_pixels_indices) == 0:
-            return None
-        
-        # Randomly sample 10% of non-black pixels
-        num_samples = max(1, len(non_black_pixels_indices) // 10)  # Ensure at least one sample
-        sampled_indices = np.random.choice(len(non_black_pixels_indices), num_samples, replace=False)
-        sampled_pixels = non_black_pixels_indices[sampled_indices]
-        
-        sampled_pixels = np.float32(sampled_pixels)
-        distances = np.linalg.norm(sampled_pixels - current_position, axis=1)
-
-        # Find the closest pixel not present in lidar_map
-        min_distance = np.inf
-        closest_pixel = None
-        for i, pixel in enumerate(sampled_pixels):
-            if tuple(pixel) not in lidar_map:  # Check if pixel is not present in lidar_map
-                if distances[i] < min_distance:
-                    min_distance = distances[i]
-                    closest_pixel = pixel
-        
-        if closest_pixel is None:
-            return None  # Return None if all sampled pixels are present in lidar_map
-
-        return closest_pixel.astype(int)  # Return as integer coordinates
-
-    def find_goal_position(self, current_position, lidar_map, camera_map):
+    def find_goal_position(self, current_position):
         """ 
         Given the turtle's position in the occupancy map, occupancy map from the
         lidar and the occupancy from the camera's POV...
         """
         
-        filtered_image1 = self.filter_frontier(lidar_map)
-        filtered_image2 = self.filter_frontier(camera_map)
-        
-        diff_image = cv2.absdiff(filtered_image1, filtered_image2)
+        filtered_image1 = self.filter_frontier(self.lidar_map)
+        filtered_image2 = self.filter_frontier(self.camera_map)
         diff_image = cv2.bitwise_xor(filtered_image1, filtered_image2)
         
-        closest_pixel = self.find_closest_pixel(current_position, diff_image, filtered_image1)
+        closest_pixel, sampled_pixels = self.find_next_pixel(current_position, diff_image, filtered_image1)
         new_target_position = closest_pixel if closest_pixel is not None else None
 
-        return new_target_position, filtered_image1, filtered_image2, diff_image
+        return new_target_position, filtered_image1, filtered_image2, diff_image, sampled_pixels
 
     def create_pose_msg(x, y, yaw):
         return get_quat_pose(x, y, yaw, stamped=rospy.get_param('~pose_stamped'))
     
-    def display_pose_and_goal(self,filtered_image1,filtered_image2,diff_image , image1_with_positions , current_position,new_target_position):
+    def display_pose_and_goal(self, filtered_image1, filtered_image2, diff_image, image1_with_positions, current_position, new_target_position, sampled_pixels):
         
-        cv2.circle(image1_with_positions, (current_position[1], current_position[0]), 5, (0, 0, 255), -1)  # Red circle for current position
-        if new_target_position is not None:
-            cv2.circle(image1_with_positions, (new_target_position[1], new_target_position[0]), 5, (0, 255, 0), -1)  # Green circle for final position
-        
-        # Display both filtered images side by side
-        fig, axes = plt.subplots(1, 4, figsize=(20, 5))
-        axes[0].imshow(filtered_image1, cmap='gray')
-        axes[0].set_title("Current Lidar Map")
-        axes[0].axis('off')
-        axes[1].imshow(filtered_image2, cmap='gray')
-        axes[1].set_title("Frontier seen by Camera")
-        axes[1].axis('off')
-        axes[2].imshow(diff_image, cmap='gray')
-        axes[2].set_title("Frontier to explore")
-        axes[2].axis('off')
-        axes[3].imshow(cv2.cvtColor(image1_with_positions, cv2.COLOR_BGR2RGB))
-        axes[3].set_title("Current - Red vs Goal - Green ")
-        axes[3].axis('off')
-        plt.show()
-    
+        image1_with_positions = cv2.cvtColor(image1_with_positions, cv2.COLOR_GRAY2RGB).astype(float)
+        filtered_image1 = cv2.cvtColor(filtered_image1, cv2.COLOR_GRAY2RGB).astype(float)
+        filtered_image2 = cv2.cvtColor(filtered_image2, cv2.COLOR_GRAY2RGB).astype(float)
+        diff_image = cv2.cvtColor(diff_image, cv2.COLOR_GRAY2RGB).astype(float)
 
+        image1_with_positions = cv2.circle(image1_with_positions, (current_position[1], current_position[0]), 3, (0, 0, 255), -1)  # Red circle for current position
+        for sampled_grid_ids in sampled_pixels:
+            image1_with_positions = cv2.circle(image1_with_positions, (sampled_grid_ids[1], sampled_grid_ids[0]), 3, (255, 0, 0), -1)  # Blue circle for all sampled frontiers
+        if new_target_position is not None:
+            image1_with_positions = cv2.circle(image1_with_positions, (new_target_position[1], new_target_position[0]), 3, (0, 255, 0), -1)  # Green circle for final position
+        
+        # cv2.imshow("Frontiers", image1_with_positions) @SAI, you can display just the frontires images, or all
+        cv2.imshow("Frontiers", np.hstack([filtered_image1, filtered_image2, diff_image, image1_with_positions]))
+        key = cv2.waitKey(1)
+        if key == 27:
+            cv2.destroyAllWindows()
+        if key == ord('p'):
+            cv2.waitKey(-1)
+    
     def main(self):
         rate = rospy.Rate(1)
 
@@ -203,13 +164,14 @@ class GoalUpdater(Mapping):
             if self.reset_goal and hasattr(self, 'turtle_pose'):
                 turtle_pose = self.turtle_pose
                 cor_x, cor_y, _  = super()._world_coordinates_to_map_indices(turtle_pose[:2])
+                
                 rospy.loginfo(f"Recieved a request to update the goal... current turtle pose: {turtle_pose}, grid coords: {cor_x, cor_y}")
                 turtle_grid_pose = np.array([cor_x, cor_y])
-                new_target_position, _f1, _f2, _d  = self.find_goal_position(turtle_grid_pose, self.lidar_map, self.camera_map)
-                #_f1, _f2, _d = self.lidar_map, self.camera_map ,self.lidar_map
+                new_target_position, _f1, _f2, _d, sampled_pixels = self.find_goal_position(turtle_grid_pose)
+
                 if new_target_position is not None:
                     # Get new Pose
-                    self.display_pose_and_goal(_f1, _f2, _d ,  self.lidar_map , turtle_grid_pose,new_target_position)
+                    self.display_pose_and_goal(_f1, _f2, _d, self.lidar_map, turtle_grid_pose, new_target_position, sampled_pixels)
                     yaw  = calculate_yaw(new_target_position[0], new_target_position[1], *turtle_pose[:2])
                     new_target_coords = super()._grid_indices_to_coords(*new_target_position, yaw, sign=-1)
                     pose = get_quat_pose(new_target_coords[0], new_target_coords[1], yaw, stamped=rospy.get_param('~pose_stamped'))

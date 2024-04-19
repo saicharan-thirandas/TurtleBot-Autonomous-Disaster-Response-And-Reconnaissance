@@ -49,7 +49,6 @@ class TubeMPPIROSNode:
             msg = msg.pose
         self.goal_position = np.array([msg.position.x, msg.position.y])
         self.path_planner.update_goal(self.goal_position)
-        rospy.loginfo(f"Updated goal pose set to: {self.goal_position}")
 
     def map_callback(self, msg):
         grid = np.array(msg.data).reshape((msg.info.height, msg.info.width))
@@ -64,10 +63,11 @@ class TubeMPPIROSNode:
 
     def plan_and_execute(self):
         rospy.loginfo(f"PLANNING AND EXECUTING... TO GO TO {self.goal_position}")
+        self.velocity_publisher.publish(Twist())
         control_actions, _ = self.path_planner.get_controls(self.current_pose)
-        for control in control_actions[:1]:
+        for control in control_actions[:5]:
             self.publish_vel(control)
-            time.sleep(0.5)
+            time.sleep(1) # @SAI I think this should be dt, so ask Sunny what dt he uses for mppi
             rospy.loginfo(f"publishing Controls: {control}")
         
     def publish_vel(self, control):
