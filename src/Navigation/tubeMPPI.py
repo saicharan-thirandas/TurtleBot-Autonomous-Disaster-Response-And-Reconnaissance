@@ -43,7 +43,6 @@ class TubeMPPIRacetrack:
       return z_traj, v
 
     def get_action(self, x0):
-      start = timeit.default_timer()
       if self.z is None:
         self.z = x0
 
@@ -63,6 +62,10 @@ class TubeMPPIRacetrack:
       z_next = self.motion_model.step(self.z.copy(), v[0])
       self.z = z_next
 
-      self.times.append(timeit.default_timer() - start)
-
       return u, v
+    
+    def update_goal(self, new_goal):
+        self.nominal.waypoint = np.array(new_goal).reshape((1, -1))
+        self.ancillary.waypoint = np.array(new_goal).reshape((1, -1))
+
+  
