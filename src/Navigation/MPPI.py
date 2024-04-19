@@ -6,7 +6,7 @@ class MPPIRacetrack:
     def __init__(
         self,
         static_map,
-        num_rollouts_per_iteration=50,
+        num_rollouts_per_iteration=100,
         num_steps_per_rollout=20,
         num_iterations=20,
         lamb=10,
@@ -14,7 +14,7 @@ class MPPIRacetrack:
     ):
         """ Your implementation here """
         self.num_rollouts_per_iteration = num_rollouts_per_iteration
-        self.num_steps_per_rollout = num_steps_per_rollout
+        self.num_steps_per_rollout = num_steps_per_rollout - 1
         self.num_iterations = num_iterations
         self.lamb = lamb
 
@@ -26,15 +26,20 @@ class MPPIRacetrack:
         self.static_map = static_map
 
         #set way points
+        self.waypoints = np.array(
+            [
+                [-3.0, 0.0],
+                [-2.0, 4.0],
+                [4.0, 1.0],
+                [-3.0, 0.0],
+            ]
+        )
         # self.waypoints = np.array(
         #     [
-        #         [-3.0, 0.0],
-        #         [-2.0, 4.0],
-        #         [4.0, 1.0],
-        #         [-3.0, 0.0],
+        #         [-10, 10]
         #     ]
         # )
-        self.waypoint = None
+        self.current_waypoint_index = 0
 
         self.cmap = plt.get_cmap("winter_r")
 
@@ -45,8 +50,14 @@ class MPPIRacetrack:
         self.nominal_actions[:, 0] = 1.0
 
     def score_rollouts(self, rollouts, actions):
-        goal_pos = self.waypoint
+        goal_pos = self.waypoints[
+            self.current_waypoint_index % self.waypoints.shape[0]
+        ]
         speed_scores = np.linalg.norm(goal_pos - rollouts[:, -1, 0:2], axis=1)
+
+        if np.min(speed_scores) < 0.3:
+            self.current_waypoint_index += 1
+            # print(f'move to next waypoint: {self.current_waypoint_index}, {self.waypoints[self.current_waypoint_index]}')
 
         rollouts_in_G, in_map = (
             self.static_map.world_coordinates_to_map_indices(
@@ -80,8 +91,8 @@ class MPPIRacetrack:
         nominal_actions = self.nominal_actions.copy()
         for iteration in range(self.num_iterations):
             delta_actions = np.random.uniform(
-                low=-0.5,
-                high=0.5,
+                low=-2.0,
+                high=2.0,
                 size=(
                     self.num_rollouts_per_iteration,
                     self.num_steps_per_rollout,
@@ -133,4 +144,4 @@ class MPPIRacetrack:
 
         self.nominal_actions = np.roll(best_rollout_actions, -1, axis=0)
 
-        return best_rollout_actions
+        return best_rollout_actions, best_score_so_far, best_rollout_so_far
