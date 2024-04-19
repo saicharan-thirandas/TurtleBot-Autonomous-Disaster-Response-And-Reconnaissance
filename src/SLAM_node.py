@@ -6,10 +6,10 @@ import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose, PoseStamped, Twist
+from geometry_msgs.msg import Pose, PoseStamped
 from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32MultiArray
 import time
 
 import os
@@ -27,45 +27,40 @@ class Lidar(Mapping):
         self._init_map()
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
         self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(355) or angle_rad <= np.deg2rad(5)
-        self.distance_threshold = 0.85
-        self.count = 10
+        
+        self.request_lidar_map  = False
 
+        # Publish Lidar occupancy map
         self.occ_map_pub = rospy.Publisher(
             name=rospy.get_param('~occupancy_map_topic'),
             data_class=OccupancyGrid,
             queue_size=10
         )
 
-        self.occ_map_pub_cam = rospy.Publisher(
-            name=rospy.get_param('~occupancy_map_cam_topic'),
-            data_class=OccupancyGrid,
+        self.occ_frontiers_pub = rospy.Publisher(
+            name='/occ_frontiers',
+            data_class=Int32MultiArray, 
             queue_size=10
         )
 
-        # Subscribe to the lidar messages
-        self.lidar_sub = rospy.Subscriber(
+        self.unocc_frontiers_pub = rospy.Publisher(
+            name='/unocc_frontiers',
+            data_class=Int32MultiArray, 
+            queue_size=10
+        )
+
+        # Subscribe to the lidar messages from turtlebot's 2D lidar
+        rospy.Subscriber(
             name=rospy.get_param('~lidar_topic'), 
             data_class=LaserScan, 
-            callback=self.update_map
+            callback=self.process_lidar
         )
 
-        self.goal_reset_publisher = rospy.Publisher(
-            name=rospy.get_param('~goal_reset'), 
-            data_class=Bool, 
-            queue_size=10
-        )
- 
+        # Subscribe to the lidar request from update_goal node
         rospy.Subscriber(
-            name=rospy.get_param('~goal_update'),
-            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose,
-            callback=self.goal_pose_callback,
-            queue_size=10
-        )
-
-        self.cmd_vel = rospy.Publisher(
-            '/cmd_vel', 
-            Twist, 
-            queue_size=10
+            name='/lidar_request', 
+            data_class=Bool, 
+            callback=self.lidar_request
         )
  
     def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
@@ -78,84 +73,81 @@ class Lidar(Mapping):
         """ Update current pose using odometry """
         self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
 
-    def update_map(self, lidar_msg):
+    def lidar_request(self, msg):
+        self.request_lidar_map = msg.data # True
+        if self.request_lidar_map:
+            rospy.loginfo("REQUESTING NEW LIDAR MAP...")
 
-        ranges = np.asarray(lidar_msg.ranges)
+    def process_lidar(self, lidar_msg):
+
+        ranges  = np.asarray(lidar_msg.ranges)
         x, y, w = list(self.current_pose)
         obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
-        narrow_pov_ranges = 0.0001
+        
+        narrow_pov_ranges = 0
         narrow_pov_counts = 0
 
+        unoccupied_frontiers = []
+        occupied_frontiers = []
+        
         for i in range(len(ranges)):
             # Get angle of range
             angle_rad = i * lidar_msg.angle_increment
             beam_angle_rad = w + angle_rad
-            
-            #if ranges[i] == np.inf:
-             #   ranges[i] = 1.2
-            # @SAI, This need to be commented out, else Lidar publishing is too slow and we get bad results
-            # Maybe try to figure out how to get frontiers using xor in cv2 with just the 2 maps and with continue if == np.inf
 
+            send_unoccupied_frontiers = False
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
-                continue
-
-            # Get x,y position of laser beam in the map
-            hit_x = x + np.cos(beam_angle_rad) * ranges[i]
-            hit_y = y + np.sin(beam_angle_rad) * ranges[i]
-
-            hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
-            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
-
-            self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-            self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
-
-            if self.in_cam_pov(angle_rad):
-                self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
-                self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]]  = 1
-
+                # 10% chance to send hit_pt_inds as unoccupied frontiers
+                if ranges[i] == np.inf and self.request_lidar_map:
+                    if np.random.uniform() < 0.1:
+                        ranges[i] = 3.5
+                        send_unoccupied_frontiers = True
+                else:
+                    continue
+            
             if self.narrow_cam_pov(angle_rad):
                 narrow_pov_ranges += ranges[i]
                 narrow_pov_counts += 1
-                
+
+            if self.request_lidar_map:
+                # Get x,y position of laser beam in the map
+                hit_x = x + np.cos(beam_angle_rad) * ranges[i]
+                hit_y = y + np.sin(beam_angle_rad) * ranges[i]
+
+                hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
+                free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+
+                self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
+                self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+
+                if send_unoccupied_frontiers:
+                    unoccupied_frontiers.append(hit_pt_inds)
+
+                if not self.in_cam_pov(angle_rad) and not send_unoccupied_frontiers:
+                    # 10% chance to send hit_pt_inds as occupied frontiers
+                    if np.random.uniform() < 0.1:
+                        occupied_frontiers.append(hit_pt_inds)
+
         if narrow_pov_counts > 0:
-            # If something is close to the cam and our goal distance is getting close
-            if (narrow_pov_ranges / (narrow_pov_counts + 1e-9)) < self.distance_threshold and self.goal_distance() < 0.35:
-                rospy.loginfo("CLOSE TO WALL AND REACHED THE GOAL...GOAL RESET")
-                self._reset_goal()
+            avg_campov_range = narrow_pov_ranges / (narrow_pov_counts + 1e-9)
+            # TODO: PUBLISH THE NARROW POV DISTANCE AVG AS A NUMBER
+            pass
+        else:
+            # TODO: PUBLISH -1 to symbolize np.inf
+            pass
 
-            # Outside the for loop
-            if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold :
-                self.count -=1
-                if self.count <=1:
-                    rospy.loginfo("CLOSE TO WALL...GETTING STUCK...GOAL RESET")
-                    self.count=10
-                    self._reset_goal(False)
-        
-        # We have reached the goal
-        if self.goal_distance() < 0.35:
-            rospy.loginfo("CLOSE TO GOAL...GOAL RESET")
-            self._reset_goal()
+        if self.request_lidar_map:
+            self.publish_occupancy_map(
+                input_grid=super()._log_odds_to_prob(
+                    log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
+                    ) * 100, 
+                cam_pub=self.occ_map_pub
+            )
+            
+            self.publish_frontiers(occupied_frontiers, self.occ_frontiers_pub)
+            self.publish_frontiers(unoccupied_frontiers, self.unocc_frontiers_pub)
 
-        self.publish(
-            input_grid=super()._log_odds_to_prob(
-                log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
-                ) * 100, 
-            cam_pub=self.occ_map_pub
-        )
-        
-        self.publish(
-            input_grid=self.occupancy_grid_logodds_cam_filter * super()._log_odds_to_prob(
-                log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
-                ) * 100,
-            cam_pub=self.occ_map_pub_cam
-        )
-    
-    def _reset_goal(self, stop: bool=True):
-        reset = Bool()
-        reset.data = True
-        self.goal_reset_publisher.publish(reset)
-        if stop:
-            self.cmd_vel.publish(Twist())
+        self.request_lidar_map = False
 
     def _init_map(self):
 
@@ -181,7 +173,7 @@ class Lidar(Mapping):
         map_init.data = input_grid.flatten().astype(np.int8)
         return map_init
 
-    def publish(self, input_grid: np.ndarray, cam_pub: rospy.Publisher):
+    def publish_occupancy_map(self, input_grid: np.ndarray, cam_pub: rospy.Publisher):
 
         # Conver the map to a 1D array
         map_update = OccupancyGrid()
@@ -191,21 +183,13 @@ class Lidar(Mapping):
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
         cam_pub.publish(map_update)
- 
-    def goal_pose_callback(self, pose_msg):
-        if rospy.get_param('~pose_stamped'):
-            pose_msg = pose_msg.pose
-        self.goal_pose = get_matrix_pose_from_quat(pose_msg, return_matrix=False) # [x, y, yaw]
- 
-    def goal_distance(self):
-        if hasattr(self, 'goal_pose') and hasattr(self, 'current_pose'):
-            xc, yc, _ = self.current_pose
-            xg, yg, _ = self.goal_pose
-        # Calculate Euclidean distance between the turtle and the goal
-            distance = np.sqrt((xc - xg) ** 2 + (yc - yg) ** 2)
-            return distance
-        else:
-            return np.inf
+
+    def publish_frontiers(frontiers_list, frontiers_pub):
+
+        frontiers = np.array(frontiers_list).flatten().astype(np.int32) # (n, 2) -> (n*2,)
+        frontiers_msg = Int32MultiArray()
+        frontiers_msg.data = frontiers
+        frontiers_pub.publish(frontiers_msg)
 
 
 class GTSAM(Lidar):

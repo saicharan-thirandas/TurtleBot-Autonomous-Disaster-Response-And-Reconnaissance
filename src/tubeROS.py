@@ -1,8 +1,7 @@
 import rospy
 import numpy as np
-from geometry_msgs.msg import Twist, Point, PoseStamped, Pose
+from geometry_msgs.msg import Twist, PoseStamped, Pose
 from nav_msgs.msg import OccupancyGrid
-from tf.transformations import euler_from_quaternion
 import time
 
 import os
@@ -64,7 +63,7 @@ class TubeMPPIROSNode:
     def plan_and_execute(self):
         rospy.loginfo(f"PLANNING AND EXECUTING... TO GO TO {self.goal_position}")
         self.velocity_publisher.publish(Twist())
-        control_actions, _ = self.path_planner.get_controls(self.current_pose)
+        control_actions, _ = self.path_planner.get_action(self.current_pose)
         for control in control_actions[:5]:
             self.publish_vel(control)
             time.sleep(1) # @SAI I think this should be dt, so ask Sunny what dt he uses for mppi
