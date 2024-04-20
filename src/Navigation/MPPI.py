@@ -25,8 +25,8 @@ class MPPIRacetrack(Mapping):
         self.motion_model = motion_model
         self.action_limits = np.vstack(
             [
-                np.array([-.5, -np.pi]), # @SAI I changed this, not sure if this helps? 
-                np.array([.5,  np.pi])
+                np.array([0., -np.pi]), # @SAI I changed this, not sure if this helps? 
+                np.array([1.,  np.pi])
             ]
         )
 
