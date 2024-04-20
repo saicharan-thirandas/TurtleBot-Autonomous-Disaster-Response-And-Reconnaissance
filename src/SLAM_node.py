@@ -16,6 +16,9 @@ from squirtle.msg import lidar_frontiers
 
 import os
 import sys
+import datetime
+
+
 sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_quat_pose, get_matrix_pose_from_quat
 from image_processing import get_frontiers
@@ -116,19 +119,34 @@ class Lidar(Mapping):
         
         narrow_pov_ranges = 0
         narrow_pov_counts = 0
+        current_second = datetime.datetime.now().second
+
         
         for i in range(len(ranges)):
             # Get angle of range
             angle_rad = i * lidar_msg.angle_increment
             beam_angle_rad = w + angle_rad
 
-            # send_unoccupied_frontiers = False
+            if ranges[i] == np.inf:
+                ranges[i]=2.5
+
             if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
                 continue
             
             if self.narrow_cam_pov(angle_rad):
                 narrow_pov_ranges += ranges[i]
                 narrow_pov_counts += 1
+
+            if self.in_cam_pov(angle_rad) and not self.request_lidar_data:
+                # Get x,y position of laser beam in the map
+                hit_x = x + np.cos(beam_angle_rad) * ranges[i]
+                hit_y = y + np.sin(beam_angle_rad) * ranges[i]
+
+                hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
+                free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+
+                self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
+                self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]] = 1
 
             if self.request_lidar_data:
                 # Get x,y position of laser beam in the map
@@ -142,9 +160,9 @@ class Lidar(Mapping):
                 self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
                 
                 if self.in_cam_pov(angle_rad):
-                    self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-                    self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
-
+                    self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
+                    self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]] = 1
+                  
         msg = Float64()
         msg.data = narrow_pov_ranges / (narrow_pov_counts + 1e-9) if narrow_pov_counts > 0 else -1
         self.cam_pov_ranges_pub.publish(msg)
@@ -174,9 +192,7 @@ class Lidar(Mapping):
             input_grid = super()._log_odds_to_prob(
                     log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
             ) * 100
-            input_grid_cam = super()._log_odds_to_prob(
-                    log_odds=np.clip(self.occupancy_grid_logodds_cam, a_min=-15, a_max=15)
-            ) * 100
+            input_grid_cam = self.occupancy_grid_logodds_cam_filter * input_grid
 
             # Image processing to get the occupied and unoccupied frontiers
             occupied_frontiers, _ = get_frontiers(input_grid, input_grid_cam, obs_pt_inds[:2])
@@ -196,7 +212,7 @@ class Lidar(Mapping):
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
         # Publish the map
-        self.occ_map_pub.publish(map_update)
+        cam_pub.publish(map_update)
 
 
 class GTSAM(Lidar):

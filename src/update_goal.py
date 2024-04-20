@@ -23,7 +23,7 @@ class GoalUpdater(Mapping):
         self.goal_pose = None
         self.distance_threshold = 0.85
         self.count = 10
-        cv2.namedWindow("Frontiers")
+        # cv2.namedWindow("Frontiers")
         
         # Publish to turtlebot control
         self.cmd_vel = rospy.Publisher(

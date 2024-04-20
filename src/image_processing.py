@@ -42,16 +42,17 @@ def find_next_pixel(current_position, diff_image):
     """
 
     # In diff_image, the white pixels are the walls outside the camera's pov
-    white_pixels_indices = np.argwhere(diff_image > 240)
+    white_pixels_indices = np.argwhere(diff_image > 220)
     if len(white_pixels_indices) == 0:
         return None, None
     
     # Randomly sample n% of white pixels
-    num_samples = max(1, int(len(white_pixels_indices) // 20))  # Ensure at least one sample
+    num_samples = max(1, int(len(white_pixels_indices) // 25))  # Ensure at least one sample
     sampled_indices = np.random.choice(len(white_pixels_indices), num_samples, replace=False)
     sampled_pixels = white_pixels_indices[sampled_indices].astype(np.float32)
 
     distances = np.linalg.norm(sampled_pixels - current_position, axis=1)
+    # index = np.argmin(distances)
     index = np.argsort(distances)[int(len(distances) // 2)]
     
     goal_pixel = sampled_pixels[index]        
@@ -67,6 +68,8 @@ def find_goal_position(current_position, lidar_map, camera_map):
     filtered_image1 = filter_frontier(lidar_map)
     filtered_image2 = filter_frontier(camera_map)
     diff_image = cv2.bitwise_xor(filtered_image1, filtered_image2)
+    kernel = np.ones((7,7),np.uint8)
+    diff_image = cv2.morphologyEx(diff_image, cv2.MORPH_CLOSE, kernel)
     
     goal_pixel, sampled_pixels = find_next_pixel(current_position, diff_image)
     return goal_pixel, sampled_pixels
@@ -83,6 +86,8 @@ def get_frontiers(occupancy_map: np.ndarray, cam_occupancy_map: np.ndarray, curr
 
 def display_pose_and_goal(current_position, new_target_position, occupancy_map, unoccupied_frontiers, occupied_frontiers):
     
+    cv2.namedWindow("Frontiers")
+
     image1_with_positions = cv2.cvtColor(occupancy_map, cv2.COLOR_GRAY2RGB).astype(float)
     image1_with_positions = cv2.circle(image1_with_positions, (int(current_position[1]), int(current_position[0])), 3, (0, 0, 255), -1)  # Red circle for current position
 
@@ -95,7 +100,6 @@ def display_pose_and_goal(current_position, new_target_position, occupancy_map, 
     if new_target_position is not None:
         image1_with_positions = cv2.circle(image1_with_positions, (new_target_position[1], new_target_position[0]), 3, (0, 255, 0), -1)  # Green circle for final position
     
-    cv2.namedWindow("Frontiers")
     cv2.imshow("Frontiers", image1_with_positions)
     key = cv2.waitKey(1)
     if key == ord('q'):
