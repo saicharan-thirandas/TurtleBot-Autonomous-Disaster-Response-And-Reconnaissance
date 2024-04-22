@@ -1,22 +1,31 @@
 #!/usr/bin/env python3
 
 import gtsam
-from gtsam.symbol_shorthand import X, L
+import gtsam.noiseModel
+from gtsam.symbol_shorthand import X, L, R
 import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import Pose, PoseStamped, Twist
-from scipy.spatial.transform import Rotation as R
+from geometry_msgs.msg import Pose, PoseStamped
+# from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, Int32MultiArray, Float64
+# from actionlib import SimpleActionServer
+from squirtle.msg import lidar_frontiers
+
 
 import os
 import sys
+import datetime
+
+
 sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_quat_pose, get_matrix_pose_from_quat
+from image_processing import get_frontiers
 from mapping import Mapping
-
+import matplotlib.pyplot as plt
+import cv2
 
 class Lidar(Mapping):
 
@@ -24,18 +33,16 @@ class Lidar(Mapping):
 
         super(Lidar, self).__init__()
         self._init_map()
-        self.dx, self.dy, self.dw = [0., 0., 0.]
         self.in_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(360 + 62.2 - 90) or angle_rad <= np.deg2rad(121.1 - 90)
-        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(-10) or angle_rad <= np.deg2rad(10)
-        self.distance_threshold = 0.05
+        self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(355) or angle_rad <= np.deg2rad(5)
+        
+        self.request_lidar_data  = False
 
-        # Subscribe to odometry
-        self.lidar_sub = rospy.Subscriber(
-            name=rospy.get_param('~odom_topic'), 
-            data_class=Odometry, 
-            callback=self.update_odom
+        self.measurement_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.1, 0.1])
         )
 
+        # Publish Lidar occupancy map for TubeROS
         self.occ_map_pub = rospy.Publisher(
             name=rospy.get_param('~occupancy_map_topic'),
             data_class=OccupancyGrid,
@@ -46,89 +53,34 @@ class Lidar(Mapping):
             name=rospy.get_param('~occupancy_map_cam_topic'),
             data_class=OccupancyGrid,
             queue_size=10
-        )
+         )
 
-        # Subscribe to the lidar messages
-        self.lidar_sub = rospy.Subscriber(
-            name=rospy.get_param('~lidar_topic'), 
-            data_class=LaserScan, 
-            callback=self.update_map
-        )
-
-        self.goal_reset_publisher = rospy.Publisher(
-            name=rospy.get_param('~goal_reset'), 
-            data_class=Bool, 
+        # Publish occupancy map and frontiers for goal update
+        self.lidar_frontiers_pub = rospy.Publisher(
+            name='/lidar_frontiers',
+            data_class=lidar_frontiers, 
             queue_size=10
         )
 
-    def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
-        diff = hit_pt_inds - obs_pt_inds
-        j = np.argmax( np.abs(diff) )
-        D = np.abs( diff[j] )
-        return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
-    
-    def update_odom(self, odom_msg):
-        self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
-        twist_msg = odom_msg.twist.twist
-        self.dx += twist_msg.linear.x
-        self.dy += twist_msg.linear.y
-        self.dw += twist_msg.angular.z
-
-    def update_map(self, lidar_msg):
-
-        ranges = np.asarray(lidar_msg.ranges)
-        x, y, w = list(self.current_pose)
-        obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
-        narrow_pov_ranges = 0
-        narrow_pov_counts = 0
-
-        for i in range(len(ranges)):
-            # Get angle of range
-            angle_rad = i * lidar_msg.angle_increment
-            beam_angle_rad = w + angle_rad
-
-            if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
-                continue
-
-            # if ranges[i] == np.inf:
-            #     ranges[i] = 3.5
-
-            # Get x,y position of laser beam in the map
-            hit_x = x + np.cos(beam_angle_rad) * ranges[i]
-            hit_y = y + np.sin(beam_angle_rad) * ranges[i]
-
-            hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
-            free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
-
-            self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-            self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
-
-            if self.in_cam_pov(angle_rad):
-                self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds_cam[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
-                self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds_cam[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
-
-            if self.narrow_cam_pov(angle_rad):
-                narrow_pov_ranges += ranges[i]
-                narrow_pov_counts += 1
-
-        # rospy.loginfo(f"Narrow POV distance avg: {narrow_pov_ranges / narrow_pov_counts}")
-        if (narrow_pov_ranges / narrow_pov_counts) < self.distance_threshold:
-            reset = Bool()
-            reset.data = True
-            self.goal_reset_publisher.publish(reset)
-
-        self.publish(
-            input_grid=super()._log_odds_to_prob(
-                log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
-                ) * 100, 
-            cam_pub=self.occ_map_pub
+        # Publish cam pov lidar readings 
+        self.cam_pov_ranges_pub = rospy.Publisher(
+            name='/cam_pov_ranges',
+            data_class=Float64, 
+            queue_size=10
         )
-        
-        self.publish(
-            input_grid=super()._log_odds_to_prob(
-                log_odds=np.clip(self.occupancy_grid_logodds_cam, a_min=-15, a_max=15)
-                ) * 100,
-            cam_pub=self.occ_map_pub_cam
+
+        # Subscribe to the lidar messages from turtlebot's 2D lidar
+        rospy.Subscriber(
+            name=rospy.get_param('~lidar_topic'), 
+            data_class=LaserScan, 
+            callback=self.process_lidar
+        )
+
+        # Subscribe to the lidar request from update_goal node
+        rospy.Subscriber(
+            name='/lidar_request', 
+            data_class=Bool, 
+            callback=self.lidar_request
         )
 
     def _init_map(self):
@@ -142,8 +94,8 @@ class Lidar(Mapping):
     def _init_occupancy_map(self, input_grid: np.ndarray):
 
         map_init = OccupancyGrid()
-        map_init.info.width  = np.array(self.grid_size_x, np.uint32)
-        map_init.info.height = np.array(self.grid_size_y, np.uint32)
+        map_init.info.width  = np.array(400, np.uint32)
+        map_init.info.height = np.array(400, np.uint32)
         map_init.info.resolution = np.array(self.grid_resolution, np.float32)
         map_init.info.origin.position.x = float(self.grid_origin_x)
         map_init.info.origin.position.y = float(self.grid_origin_y)
@@ -154,15 +106,122 @@ class Lidar(Mapping):
         map_init.info.origin.orientation.w = 1.
         map_init.data = input_grid.flatten().astype(np.int8)
         return map_init
+ 
+    def _get_free_grids_from_beam(self, obs_pt_inds, hit_pt_inds) -> np.ndarray:
+        diff = hit_pt_inds - obs_pt_inds
+        j = np.argmax( np.abs(diff) )
+        D = np.abs( diff[j] )
+        return obs_pt_inds + ( np.outer( np.arange(D + 1), diff ) + (D // 2) ) // D
+    
+    def _update_pose(self, odom_msg):
+        """ Update current pose using odometry """
+        self.current_pose = get_matrix_pose_from_quat(odom_msg.pose.pose, return_matrix=False)
 
-    def publish(self, input_grid: np.ndarray, cam_pub: rospy.Publisher):
+    def process_lidar(self, lidar_msg):
+
+        ranges  = np.asarray(lidar_msg.ranges)
+        x, y, w = list(self.current_pose)
+        obs_pt_inds = super()._world_coordinates_to_map_indices([x, y])
+        
+        narrow_pov_ranges = 0
+        narrow_pov_counts = 0
+        self.lidar_factors = []
+        
+        for i in range(len(ranges)):
+            # Get angle of range
+            angle_rad = i * lidar_msg.angle_increment
+            beam_angle_rad = w + angle_rad
+
+            if ranges[i] == np.inf:
+                ranges[i]=2.5
+
+            if ranges[i] <= lidar_msg.range_min or ranges[i] == np.inf:
+                continue
+            
+            if self.narrow_cam_pov(angle_rad):
+                narrow_pov_ranges += ranges[i]
+                narrow_pov_counts += 1
+
+            if self.in_cam_pov(angle_rad) and not self.request_lidar_data:
+                # Get x,y position of laser beam in the map
+                hit_x = x + np.cos(beam_angle_rad) * ranges[i]
+                hit_y = y + np.sin(beam_angle_rad) * ranges[i]
+
+                hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
+                free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+
+                self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
+                self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]] = 1
+            
+            if i % 10 == 0: 
+                bearing = gtsam.Rot2(beam_angle_rad)
+                self.lidar_factors.append((R(i), bearing, ranges[i], beam_angle_rad))
+
+            if self.request_lidar_data:
+                # Get x,y position of laser beam in the map
+                hit_x = x + np.cos(beam_angle_rad) * ranges[i]
+                hit_y = y + np.sin(beam_angle_rad) * ranges[i]
+
+                hit_pt_inds  = super()._world_coordinates_to_map_indices([hit_x, hit_y])
+                free_pt_inds = self._get_free_grids_from_beam(obs_pt_inds[:2], hit_pt_inds[:2])
+
+                self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] = self.occupancy_grid_logodds[hit_pt_inds[0], hit_pt_inds[1]] + self.log_odds_occ - self.log_odds_prior
+                self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] = self.occupancy_grid_logodds[free_pt_inds[:, 0], free_pt_inds[:, 1]] + self.log_odds_free - self.log_odds_prior
+                
+                if self.in_cam_pov(angle_rad):
+                    self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
+                    self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]] = 1
+                  
+        msg = Float64()
+        msg.data = narrow_pov_ranges / (narrow_pov_counts + 1e-9) if narrow_pov_counts > 0 else -1
+        self.cam_pov_ranges_pub.publish(msg)
+        if self.request_lidar_data:
+            return obs_pt_inds
+
+    def _send_request(self, unoccupied_frontiers:list, occupied_frontiers:list):
+        
+        result = lidar_frontiers()
+        result.occupied_frontiers.data   = np.array(occupied_frontiers).flatten().astype(np.int32) # (n, 2) -> (n*2,)
+        result.unoccupied_frontiers.data = np.array(unoccupied_frontiers).flatten().astype(np.int32) # (n, 2) -> (n*2,)
+        self.lidar_frontiers_pub.publish(result)
+
+    def lidar_request(self, msg):
+        rospy.loginfo("[SLAM NODE] RECIEVED REQUEST FOR NEW LIDAR MAP...")
+
+        self.request_lidar_data = msg.data
+
+        if self.request_lidar_data == True:
+            lidar_msg = rospy.wait_for_message(
+                topic=rospy.get_param('~lidar_topic'), 
+                topic_type=LaserScan
+            )
+            obs_pt_inds = self.process_lidar(lidar_msg)
+            
+            # Occupancy map will be updated with most recent lidar data with self.request_lidar_data == True
+            input_grid = super()._log_odds_to_prob(
+                    log_odds=np.clip(self.occupancy_grid_logodds, a_min=-15, a_max=15)
+            ) * 100
+            input_grid_cam = self.occupancy_grid_logodds_cam_filter * input_grid
+
+            # Image processing to get the occupied and unoccupied frontiers
+            occupied_frontiers, _ = get_frontiers(input_grid, input_grid_cam, obs_pt_inds[:2])
+
+            # Publish the frontiers and occupancy maps
+            self._send_request([], occupied_frontiers)
+            self.publish_occupancy_map(input_grid, self.occ_map_pub)
+            self.publish_occupancy_map(input_grid_cam, self.occ_map_pub_cam)
+            self.request_lidar_data = False
+
+    def publish_occupancy_map(self, input_grid: np.ndarray, cam_pub: rospy.Publisher):
 
         # Conver the map to a 1D array
         map_update = OccupancyGrid()
         map_update.info = self.map_init.info
-        map_update.header.frame_id = 'occupancy_grid' if cam_pub.name==rospy.get_param('~occupancy_map_topic') else 'occupancy_grid_camera'
+        map_update.header.frame_id = 'occupancy_grid'
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
+        # if cam_pub.name == rospy.get_param('~occupancy_map_topic'):
+            # np.save('/home/saicharan/catkin_ws/src/squirtle/ros_samples/grid.npy', input_grid)
         # Publish the map
         cam_pub.publish(map_update)
 
@@ -173,8 +232,17 @@ class GTSAM(Lidar):
     def __init__(self):
 
         rospy.init_node('slam_node', anonymous=True)
+        self.dx, self.dy, self.dw = [0., 0., 0.]
+
+        # Subscribe to odometry
+        self.odom_sub = rospy.Subscriber(
+            name=rospy.get_param('~odom_topic'), 
+            data_class=Odometry, 
+            callback=self.update_odom
+        )
+
         super(GTSAM, self).__init__()
-        self.cmd_pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10) # TODO
+
         self.prior_noise = gtsam.noiseModel.Diagonal.Sigmas(
             np.array([0.1, 0.1, 0.1])
         )
@@ -220,6 +288,14 @@ class GTSAM(Lidar):
         self.graph.add(priorFactor)
         self.initial_estimate.insert(X(self.current_pose_idx), priorMean)
 
+    def update_odom(self, odom_msg):
+        """ Using odom message, will update current pose and dx, dy, dw """
+        super()._update_pose(odom_msg)
+        twist_msg = odom_msg.twist.twist
+        self.dx += twist_msg.linear.x
+        self.dy += twist_msg.linear.y
+        self.dw += twist_msg.angular.z
+
     def add_tag_factors(self, apriltag_msg):
         
         added_factors = False
@@ -238,30 +314,9 @@ class GTSAM(Lidar):
             self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose_idx), L(tag_id), relative_pose, self.apriltag_noise))
         rospy.loginfo(f"ADDED TAG FACTORS: {added_factors}")
 
-    def add_grid_factors(self):
-
-        # TODO: Create occupancy grid factors for GTSAM. Is this needed?
-        grid_factors = []
-        for x in range(self.grid_size_x):
-            for y in range(self.grid_size_y):
-                if self.occupancy_grid[x, y] != 0:  # TODO: What should the conditional be to use occupied cells?
-                    # Create factor for occupied cell
-                    factor = gtsam.RangeFactor(
-                        1,  # TODO: Use a shorthand variable
-                        gtsam.Point2((self.grid_origin_x + x * self.grid_resolution), (self.grid_origin_y + y * self.grid_resolution)),
-                        1.0,  # Range (distance to obstacle)
-                        self.occupancy_noise
-                    )
-                    grid_factors.append(factor)
-
-        # Add occupancy grid factors to the factor graph
-        for factor in grid_factors:
-            self.graph.add(factor)
-
     def add_odem_factors(self):
 
         assert self.current_pose_idx >= 1
-        # rospy.loginfo(f"1. CURRENT ODOMETRY FOR SLAM: {[self.dx, self.dy, self.dw]}")
         odometry = gtsam.Pose2(self.dx, self.dy, self.dw)
 
         self.initial_estimate.insert(
@@ -269,7 +324,6 @@ class GTSAM(Lidar):
             self.initial_estimate.atPose2( X(self.current_pose_idx-1) ).compose(odometry)
         )
 
-        # rospy.loginfo(f"2. ADDING ODOMETRY: {odometry}")
         self.graph.add(
             gtsam.BetweenFactorPose2(
                 X(self.current_pose_idx-1), 
@@ -279,33 +333,76 @@ class GTSAM(Lidar):
             )
         )
         self.dx, self.dy, self.dw = [0., 0., 0.]
+    
+    def add_lidar_range_factors(self):
+
+        if hasattr(self, 'lidar_factors'):
+            for i, factor in enumerate(self.lidar_factors):
+                # R(i), Rot2(bearing), ranges[i], beam_angle_rad
+
+                if self.current_pose_idx <= 1:
+                    if i == 0: rospy.loginfo(f"FACTOR ADDED: {factor} for {self.current_pose_idx}")
+                    self.initial_estimate.insert(
+                        factor[0],
+                        gtsam.Point2(factor[2], factor[3])
+                    )
+                    if i == 0: rospy.loginfo("SUCCESS")
+                else:
+                    if i == 0: rospy.loginfo(f"FACTOR UPDATED: {factor} for {self.current_pose_idx}")
+                    self.initial_estimate.update(
+                        factor[0],
+                        gtsam.Point2(factor[2], factor[3])
+                    )
+                    if i == 0: rospy.loginfo("SUCCESS")
+                
+                landmark_factor = gtsam.BearingRangeFactor2D(
+                    X(self.current_pose_idx),
+                    factor[0], 
+                    factor[1], 
+                    factor[2], 
+                    self.measurement_noise
+                )
+                self.graph.add(landmark_factor)
 
     def optimize(self):
 
         params = gtsam.LevenbergMarquardtParams()
         optimizer = gtsam.LevenbergMarquardtOptimizer(self.graph, self.initial_estimate, params)
         result = optimizer.optimize()
-        marginals = gtsam.Marginals(self.graph, result)
-        return result, marginals
+        # marginals = gtsam.Marginals(self.graph, result)
+        return result, None
     
     def publish_poses(self, result):
 
-        curr_pose = result.atPose2( X(self.current_pose_idx) )
-        pose_msg  = get_quat_pose(x=curr_pose.x(), y=curr_pose.y(), yaw=curr_pose.theta(), stamped=rospy.get_param('~pose_stamped'))
+        current_pose = result.atPose2( X(self.current_pose_idx) )
+        x, y, w = current_pose.x(), current_pose.y(), current_pose.theta()
+        rospy.loginfo(f"3. SLAM POSE: {x, y, w}")
+        # self.current_pose if hasattr(self, 'current_pose') else (0., 0., 0)
+        pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
-        rospy.loginfo(f"3. SLAM POSE: {curr_pose.x(), curr_pose.y(), curr_pose.theta()}")
+
+    def run_SLAM(self):
+
+        # if hasattr(self, 'input_grid'):
+            # fig, ax = plt.subplots(figsize=(10, 10))
+            # ax.imshow(self.input_grid, cmap='gray', origin='lower')
+        # self.add_lidar_range_factors()
+        self.add_odem_factors()
+        result, _ = self.optimize()
+        return result
         
     def run(self):
 
         rate = rospy.Rate(1)  # 1 Hz
+        rospy.sleep(rospy.Duration(3))
+        # self.current_pose_idx = 0
         self._initialize_graph()
         result, _ = self.optimize()
         self.publish_poses(result)
+        # self.current_pose_idx = 1
         while not rospy.is_shutdown():
-            self.add_odem_factors()
-            # add_grid_factors(...)?
-            result, _ = self.optimize()
+            result = self.run_SLAM()
             self.publish_poses(result)
             rate.sleep()
 

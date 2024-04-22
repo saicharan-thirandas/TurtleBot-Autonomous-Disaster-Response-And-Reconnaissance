@@ -17,7 +17,7 @@ sys.path.append(os.path.dirname(__file__))
 from image_processing import draw_bbox
 
 
-# TODO: Confirm these; i.e. perform camera calibration
+TAG_SIZE = 0.17
 FX = 2.68e3
 FY = 2.49e3
 CX = 1.64e3
@@ -76,7 +76,7 @@ class AprilTagDetector():
                            FY, 
                            CX, 
                            CY), 
-            tag_size=0.06
+            tag_size=TAG_SIZE
         )
 
         if len(detections) == 0:
