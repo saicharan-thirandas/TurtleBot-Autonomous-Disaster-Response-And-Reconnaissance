@@ -33,14 +33,6 @@
         <param name="tags_topic" value="$(arg tags_topic)" /> 
     </node>
 
-    <!-- Tag Tracking Node -->
-    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen">
-        <param name="pose_topic" value="$(arg pose_topic)" /> 
-        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
-        <param name="tags_topic" value="$(arg tags_topic)" /> 
-        <param name="track_topic" value="$(arg track_topic)" /> 
-    </node>
-
     <!-- Frontier Node -->
     <node pkg="squirtle" type="update_goal_client.py" name="goal_update_node" output="screen">
         <param name="goal_update" value="$(arg goal_update)" /> 
@@ -51,6 +43,14 @@
     <!-- Navigation Node -->
     <node pkg="squirtle" type="tubeROS.py" name="navigation" output="screen"> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+    </node>
+
+    <!-- Tag Tracking Node -->
+    <node pkg="squirtle" type="april_tag_tracker.py" name="tag_tracker" output="screen">
+        <param name="pose_topic" value="$(arg pose_topic)" /> 
+        <param name="pose_stamped" value="$(arg pose_stamped)" /> 
+        <param name="tags_topic" value="$(arg tags_topic)" /> 
+        <param name="track_topic" value="$(arg track_topic)" /> 
     </node>
 
 </launch>

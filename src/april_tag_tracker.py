@@ -53,6 +53,8 @@ class AprilTagTracker(Mapping):
             queue_size=10
         )
 
+        # Make sure eveything is ready
+        rospy.sleep(rospy.Duration(10))
         # Subscribe to tag_detection topic
         self.tag_sub = rospy.Subscriber(
             name=rospy.get_param('~tags_topic'),

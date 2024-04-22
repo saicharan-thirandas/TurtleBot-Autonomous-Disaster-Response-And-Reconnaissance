@@ -65,15 +65,6 @@ class TubeMPPIROSNode:
 
     def plan_and_execute(self):
         rospy.loginfo(f"PLANNING AND EXECUTING... TO GO TO {self.goal_position}")
-
-        # prev_control = control
-        # while not reached_goal and requet_control:
-        #     pose_a = motion_model(pose_a, prev_control)
-        #     self.publish_vel(prev_control)
-        #     self.path_planner.publish(request_control, pose_a)
-        #     new_control = self.path_planner.wait_for_message('/control_msg')
-        #     prev_control = new_control[0]
-
         control_actions, _ = self.path_planner.get_action(self.current_pose) # Get action with world coords
         for control in control_actions[:1]:
             self.publish_vel(control)
