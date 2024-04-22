@@ -1,11 +1,4 @@
 <launch>
-    <!-- <arg name="model" default="$(env TURTLEBOT3_MODEL)" doc="model type [burger, waffle, waffle_pi]"/>
-    <arg name="configuration_basename" default="turtlebot3_lds_2d.lua"/>
-    <arg name="open_rviz" default="true"/>
-    <arg name="multi_robot_name" default=""/>
-    <arg name="launch_prefix" default="" />
-    <arg name="queue_size" default="10" /> -->
-    
     <!-- Arguments -->
     <arg name="lidar_topic" default="/scan" />
     <arg name="odom_topic" default="/odom" />
@@ -31,8 +24,6 @@
         <param name="pose_topic" value="$(arg pose_topic)" /> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
         <param name="tags_topic" value="$(arg tags_topic)" /> 
-        <param name="goal_reset" value="$(arg goal_reset)" /> 
-        <param name="goal_update" value="$(arg goal_update)" /> 
     </node>
 
     <!-- Tag Detection Node -->
@@ -53,9 +44,6 @@
     <!-- Frontier Node -->
     <node pkg="squirtle" type="update_goal_client.py" name="goal_update_node" output="screen">
         <param name="goal_update" value="$(arg goal_update)" /> 
-        <param name="goal_reset" value="$(arg goal_reset)" /> 
-        <param name="occupancy_map_topic" value="$(arg occupancy_map_topic)" /> 
-        <param name="occupancy_map_cam_topic" value="$(arg occupancy_map_cam_topic)" /> 
         <param name="pose_topic" value="$(arg pose_topic)" /> 
         <param name="pose_stamped" value="$(arg pose_stamped)" /> 
     </node> 

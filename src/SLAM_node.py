@@ -220,8 +220,6 @@ class Lidar(Mapping):
         map_update.header.frame_id = 'occupancy_grid'
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
-        # if cam_pub.name == rospy.get_param('~occupancy_map_topic'):
-            # np.save('/home/saicharan/catkin_ws/src/squirtle/ros_samples/grid.npy', input_grid)
         # Publish the map
         cam_pub.publish(map_update)
 
@@ -312,7 +310,6 @@ class GTSAM(Lidar):
                                         detection.pose.pose.pose.orientation.z)
 
             self.graph.add(gtsam.BetweenFactorPose2(X(self.current_pose_idx), L(tag_id), relative_pose, self.apriltag_noise))
-        rospy.loginfo(f"ADDED TAG FACTORS: {added_factors}")
 
     def add_odem_factors(self):
 
@@ -377,16 +374,12 @@ class GTSAM(Lidar):
         current_pose = result.atPose2( X(self.current_pose_idx) )
         x, y, w = current_pose.x(), current_pose.y(), current_pose.theta()
         rospy.loginfo(f"3. SLAM POSE: {x, y, w}")
-        # self.current_pose if hasattr(self, 'current_pose') else (0., 0., 0)
         pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
 
     def run_SLAM(self):
 
-        # if hasattr(self, 'input_grid'):
-            # fig, ax = plt.subplots(figsize=(10, 10))
-            # ax.imshow(self.input_grid, cmap='gray', origin='lower')
         # self.add_lidar_range_factors()
         self.add_odem_factors()
         result, _ = self.optimize()

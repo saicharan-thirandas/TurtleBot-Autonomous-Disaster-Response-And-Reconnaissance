@@ -164,7 +164,6 @@ class GoalUpdater(Mapping):
 
         if new_target_grid is not None:
             # Get new Pose
-            # self.display_pose_and_goal(turtle_grid_pose, new_target_grid, occupancy_map, unoccupied_frontiers, occupied_frontiers)
             goal_heading = calculate_yaw(new_target_grid[0], new_target_grid[1], *turtle_pose[:2])
             self.goal_pose = super()._grid_indices_to_coords(*new_target_grid, grid_w)
 

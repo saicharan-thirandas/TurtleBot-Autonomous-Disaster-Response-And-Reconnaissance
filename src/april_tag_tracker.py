@@ -15,9 +15,8 @@ from cv_bridge import CvBridge
 import os
 import sys
 sys.path.append(os.path.dirname(__file__))
-from transformation_utils import T_RC, T_CR, get_matrix_pose_from_quat
+from transformation_utils import T_RC, T_CR, get_matrix_pose_from_quat, get_quat_pose
 from mapping import Mapping
-
 
 class AprilTagTracker(Mapping):
 
@@ -31,6 +30,13 @@ class AprilTagTracker(Mapping):
         self.unique_tags = {}
         self.xy_to_ids   = {}
         self.current_id  = 0
+
+        # Publish new goal pose to TubeMPPI
+        self.goal_publisher = rospy.Publisher(
+            name='/goal_update', 
+            data_class=PoseStamped if rospy.get_param('~pose_stamped') else Pose, 
+            queue_size=10
+        )
 
         # Publish tracked AprilTag poses
         self.tag_track_pub = rospy.Publisher(
@@ -85,14 +91,16 @@ class AprilTagTracker(Mapping):
             T_OA = self.T_OR @ T_RC @ T_CA
             x, y = T_OA[:2, -1]
 
-            occ_x, occ_y, _  = super()._world_coordinates_to_map_indices([x, y])
+            occ_x, occ_y, w  = super()._world_coordinates_to_map_indices([x, y])
             occ_map_location = (occ_x, occ_y)
 
             self.unique_tags[occ_map_location] = T_OA
             if self.xy_to_ids.get(occ_map_location, None) is None:
                 self.xy_to_ids[occ_map_location] = self.current_id
                 self.current_id += 1
-            # self.update_goal_pub.publish() # TODO
+            
+        goal_pose_msg = get_quat_pose(x, y, w, stamped=rospy.get_param('~pose_stamped'))
+        self.goal_publisher.publish(goal_pose_msg)
         
         # Publish all tracked tags and their T_CA poses
         tag_msg = AprilTagDetectionArray()
