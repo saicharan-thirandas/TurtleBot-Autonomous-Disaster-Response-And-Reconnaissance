@@ -1,7 +1,10 @@
 #!/usr/bin/env python
-import rospy
-from geometry_msgs.msg import Twist, Pose
 import numpy as np
+from gymnasium import spaces
+
+DT = 0.2
+V_MIN = -0.22
+V_MAX = 0.22
 
 class MotionModel:
     """Abstract class for modeling the motion of a 2D mobile robot within a ROS node."""
@@ -9,18 +12,25 @@ class MotionModel:
     def __init__(self):
         pass
     
-    def step(self, current_pose, velocity_cmd, dt=0.1):
+    def step(self, current_pose, velocity_cmd, dt=DT):
         """Move 1 timestep forward using a kinematic model."""
         raise NotImplementedError
 
 class Unicycle(MotionModel):
     """Discrete-time unicycle kinematic model for 2D robot simulator."""
 
-    def __init__(self, v_min=0, v_max=1, w_min=-2 * np.pi, w_max=2 * np.pi):
+    def __init__(self, v_min=V_MIN, v_max=V_MAX, w_min=-2 * np.pi, w_max=2 * np.pi):
         super().__init__()
+        self.action_space = spaces.Box(
+            np.array([v_min, w_min]),
+            np.array([v_max, w_max]),
+            shape=(2,),
+            dtype=float,
+        )
+
 
     def step(
-        self, current_state: np.ndarray, action: np.ndarray, dt: float = 0.1
+        self, current_state: np.ndarray, action: np.ndarray, dt: float = DT
     ) -> np.ndarray:
         """Move 1 timestep forward w/ kinematic model, x_{t+1} = f(x_t, u_t)"""
         # current_state = np.array([x, y, theta])
@@ -28,7 +38,9 @@ class Unicycle(MotionModel):
 
         # clip the action to be within the control limits
         clipped_action = np.clip(
-            action, np.array([0., -np.pi]), np.array([.5, np.pi]) # @SAI I changed this, not sure if this helps?
+            action, 
+            self.action_space.low, 
+            self.action_space.high
         )
 
         current_state = current_state.reshape((-1, 3))

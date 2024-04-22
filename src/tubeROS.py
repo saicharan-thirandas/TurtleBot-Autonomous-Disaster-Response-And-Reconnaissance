@@ -50,19 +50,21 @@ class TubeMPPIROSNode:
         self.path_planner.update_goal(self.goal_position)
 
     def map_callback(self, msg):
+        """ Grid: 0 - free and 100 - occupied, transform to 255 and 0, respectively. """
         grid = np.array(msg.data).reshape((msg.info.height, msg.info.width))
+        grid = (100 - grid) > 70 # free-> True, occupied -> False
+        grid = grid.astype(np.float32) * 255 # free -> 255, occupied -> 0
         self.path_planner.update_static_map(grid)
 
     def pose_callback(self, msg):
         """ SLAM predicted position """
         if rospy.get_param('~pose_stamped'):
             msg = msg.pose
-        self.current_pose = get_matrix_pose_from_quat(msg, return_matrix=False)
+        self.current_pose = get_matrix_pose_from_quat(msg, return_matrix=False) # [x, y, yaw]
         self.current_pose = np.array([self.current_pose])
 
     def plan_and_execute(self):
         rospy.loginfo(f"PLANNING AND EXECUTING... TO GO TO {self.goal_position}")
-        self.velocity_publisher.publish(Twist())
 
         # prev_control = control
         # while not reached_goal and requet_control:
@@ -72,11 +74,10 @@ class TubeMPPIROSNode:
         #     new_control = self.path_planner.wait_for_message('/control_msg')
         #     prev_control = new_control[0]
 
-        control_actions, _ = self.path_planner.get_action(self.current_pose)
-        for control in control_actions[:5]:
+        control_actions, _ = self.path_planner.get_action(self.current_pose) # Get action with world coords
+        for control in control_actions[:1]:
             self.publish_vel(control)
-            rospy.sleep(0.1) # @SAI I think this should be dt... need to confirm dt that sunny used (I believe he said 0.1)
-            rospy.loginfo(f"publishing Controls: {control}")
+            rospy.loginfo(f"\033[96mPublishing Controls: {control}\033[0m")
         
     def publish_vel(self, control):
         twist_msg = Twist()

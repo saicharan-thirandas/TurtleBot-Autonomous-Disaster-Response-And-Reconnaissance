@@ -5,10 +5,10 @@ import rospy
 @dataclass
 class Grid:
     grid_resolution = 1/20 # meters per grid cell
-    grid_size_x = 400  # number of grid cells in the x direction
-    grid_size_y = 400  # number of grid cells in the y direction
-    grid_origin_x = 200  # origin of the grid in the x direction
-    grid_origin_y = 200  # origin of the grid in the y direction
+    grid_size_x = 20  # number of grid cells in the x direction
+    grid_size_y = 20  # number of grid cells in the y direction
+    grid_origin_x = 10  # origin of the grid in the x direction
+    grid_origin_y = 10  # origin of the grid in the y direction
 
 
 class Mapping(Grid):
@@ -17,30 +17,36 @@ class Mapping(Grid):
                  p_occ: float=1.0, 
                  p_prior: float=0.5):
         
-        # Initialize occupancy grid with p_prior
-        self.occupancy_grid_logodds = np.zeros((
-            self.grid_size_x, 
-            self.grid_size_y
-        ))
+        occupancy_grid_dims = (
+            int(self.grid_size_x / self.grid_resolution),
+            int(self.grid_size_y / self.grid_resolution),
+        )
 
-        self.occupancy_grid_logodds_cam = np.zeros((
-            self.grid_size_x, 
-            self.grid_size_y
-        ))
-        self.occupancy_grid_logodds_cam_filter = np.zeros((
-            self.grid_size_x, 
-            self.grid_size_y
-        ))
+        # Initialize occupancy grid with p_prior
+        self.occupancy_grid_logodds = np.zeros(
+            occupancy_grid_dims
+        )
+
+        self.occupancy_grid_logodds_cam = np.zeros(
+            occupancy_grid_dims
+        )
+        self.occupancy_grid_logodds_cam_filter = np.zeros(
+            occupancy_grid_dims
+        )
+
         self.log_odds_free  = self._prob_to_log_odds(p_free)
         self.log_odds_occ   = self._prob_to_log_odds(p_occ)
         self.log_odds_prior = self._prob_to_log_odds(p_prior)
 
-        self.T = np.array([
-            [1/(self.grid_resolution), 0, self.grid_origin_x], 
-            [0, 1/(self.grid_resolution), self.grid_origin_y], 
-            [0,                        0,                  1]
-        ])
-        
+        self.T = (1 / self.grid_resolution) * np.array(
+            [
+                [1, 0, self.grid_origin_x],
+                [0, 1, self.grid_origin_y],
+                [0, 0, 1],
+            ]
+        )
+        self.T_inv = np.linalg.inv(self.T)
+
     def _log_odds_to_prob(self, log_odds: np.ndarray) -> np.ndarray:
         return 1 - 1 / (1e-6 + 1 + np.exp(log_odds))
 
@@ -69,8 +75,7 @@ class Mapping(Grid):
         not_in_map_inds = np.where(in_map == False)
         grid_coords[not_in_map_inds[0], :] = -1
         return in_map, grid_coords
-        
-    def _grid_indices_to_coords(self, grid_x, grid_y, w, sign=1):
-        x = (grid_x - self.grid_origin_x)*self.grid_resolution
-        y = (grid_y - self.grid_origin_y)*self.grid_resolution
-        return x, y, 1
+
+    def _grid_indices_to_coords(self, grid_x, grid_y, grid_w):
+        grid_xyw = np.array([grid_x, grid_y, grid_w]).reshape((1, -1))
+        return np.dot(self.T_inv, grid_xyw.T).T.squeeze()

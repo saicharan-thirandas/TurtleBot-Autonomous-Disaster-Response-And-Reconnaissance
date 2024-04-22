@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 
 import gtsam
-from gtsam.symbol_shorthand import X, L
+import gtsam.noiseModel
+from gtsam.symbol_shorthand import X, L, R
 import numpy as np
 import rospy
 from nav_msgs.msg import Odometry, OccupancyGrid
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Pose, PoseStamped
-from scipy.spatial.transform import Rotation as R
+# from scipy.spatial.transform import Rotation as R
 from apriltag_ros.msg import AprilTagDetectionArray
 from std_msgs.msg import Bool, Int32MultiArray, Float64
 # from actionlib import SimpleActionServer
@@ -23,7 +24,8 @@ sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_quat_pose, get_matrix_pose_from_quat
 from image_processing import get_frontiers
 from mapping import Mapping
-
+import matplotlib.pyplot as plt
+import cv2
 
 class Lidar(Mapping):
 
@@ -35,6 +37,10 @@ class Lidar(Mapping):
         self.narrow_cam_pov = lambda angle_rad: angle_rad >= np.deg2rad(355) or angle_rad <= np.deg2rad(5)
         
         self.request_lidar_data  = False
+
+        self.measurement_noise = gtsam.noiseModel.Diagonal.Sigmas(
+            np.array([0.1, 0.1])
+        )
 
         # Publish Lidar occupancy map for TubeROS
         self.occ_map_pub = rospy.Publisher(
@@ -88,8 +94,8 @@ class Lidar(Mapping):
     def _init_occupancy_map(self, input_grid: np.ndarray):
 
         map_init = OccupancyGrid()
-        map_init.info.width  = np.array(self.grid_size_x, np.uint32)
-        map_init.info.height = np.array(self.grid_size_y, np.uint32)
+        map_init.info.width  = np.array(400, np.uint32)
+        map_init.info.height = np.array(400, np.uint32)
         map_init.info.resolution = np.array(self.grid_resolution, np.float32)
         map_init.info.origin.position.x = float(self.grid_origin_x)
         map_init.info.origin.position.y = float(self.grid_origin_y)
@@ -119,8 +125,7 @@ class Lidar(Mapping):
         
         narrow_pov_ranges = 0
         narrow_pov_counts = 0
-        current_second = datetime.datetime.now().second
-
+        self.lidar_factors = []
         
         for i in range(len(ranges)):
             # Get angle of range
@@ -147,6 +152,10 @@ class Lidar(Mapping):
 
                 self.occupancy_grid_logodds_cam_filter[hit_pt_inds[0], hit_pt_inds[1]] = 1
                 self.occupancy_grid_logodds_cam_filter[free_pt_inds[:, 0], free_pt_inds[:, 1]] = 1
+            
+            if i % 10 == 0: 
+                bearing = gtsam.Rot2(beam_angle_rad)
+                self.lidar_factors.append((R(i), bearing, ranges[i], beam_angle_rad))
 
             if self.request_lidar_data:
                 # Get x,y position of laser beam in the map
@@ -211,6 +220,8 @@ class Lidar(Mapping):
         map_update.header.frame_id = 'occupancy_grid'
         map_update.header.stamp = rospy.Time.now()
         map_update.data = input_grid.flatten().astype(np.int8)
+        # if cam_pub.name == rospy.get_param('~occupancy_map_topic'):
+            # np.save('/home/saicharan/catkin_ws/src/squirtle/ros_samples/grid.npy', input_grid)
         # Publish the map
         cam_pub.publish(map_update)
 
@@ -322,6 +333,36 @@ class GTSAM(Lidar):
             )
         )
         self.dx, self.dy, self.dw = [0., 0., 0.]
+    
+    def add_lidar_range_factors(self):
+
+        if hasattr(self, 'lidar_factors'):
+            for i, factor in enumerate(self.lidar_factors):
+                # R(i), Rot2(bearing), ranges[i], beam_angle_rad
+
+                if self.current_pose_idx <= 1:
+                    if i == 0: rospy.loginfo(f"FACTOR ADDED: {factor} for {self.current_pose_idx}")
+                    self.initial_estimate.insert(
+                        factor[0],
+                        gtsam.Point2(factor[2], factor[3])
+                    )
+                    if i == 0: rospy.loginfo("SUCCESS")
+                else:
+                    if i == 0: rospy.loginfo(f"FACTOR UPDATED: {factor} for {self.current_pose_idx}")
+                    self.initial_estimate.update(
+                        factor[0],
+                        gtsam.Point2(factor[2], factor[3])
+                    )
+                    if i == 0: rospy.loginfo("SUCCESS")
+                
+                landmark_factor = gtsam.BearingRangeFactor2D(
+                    X(self.current_pose_idx),
+                    factor[0], 
+                    factor[1], 
+                    factor[2], 
+                    self.measurement_noise
+                )
+                self.graph.add(landmark_factor)
 
     def optimize(self):
 
@@ -335,11 +376,18 @@ class GTSAM(Lidar):
 
         current_pose = result.atPose2( X(self.current_pose_idx) )
         x, y, w = current_pose.x(), current_pose.y(), current_pose.theta()
-        pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped')) # @SAI I am cheating here... it appears SLAM is suboptimal
+        rospy.loginfo(f"3. SLAM POSE: {x, y, w}")
+        # self.current_pose if hasattr(self, 'current_pose') else (0., 0., 0)
+        pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
 
     def run_SLAM(self):
+
+        # if hasattr(self, 'input_grid'):
+            # fig, ax = plt.subplots(figsize=(10, 10))
+            # ax.imshow(self.input_grid, cmap='gray', origin='lower')
+        # self.add_lidar_range_factors()
         self.add_odem_factors()
         result, _ = self.optimize()
         return result
@@ -347,10 +395,12 @@ class GTSAM(Lidar):
     def run(self):
 
         rate = rospy.Rate(1)  # 1 Hz
-        rospy.sleep(rospy.Duration(1))
+        rospy.sleep(rospy.Duration(3))
+        # self.current_pose_idx = 0
         self._initialize_graph()
         result, _ = self.optimize()
         self.publish_poses(result)
+        # self.current_pose_idx = 1
         while not rospy.is_shutdown():
             result = self.run_SLAM()
             self.publish_poses(result)

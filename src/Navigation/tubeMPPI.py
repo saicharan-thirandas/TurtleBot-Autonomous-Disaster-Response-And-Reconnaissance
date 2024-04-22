@@ -10,11 +10,23 @@ from ILQG import AncillaryILQG
 from MotionModel import Unicycle
 from MPPI import MPPIRacetrack
 
+TIMESTEPS = 100
+
 class TubeMPPIRacetrack:
-    def __init__(self, static_map = None, num_timesteps = 25):
+    def __init__(self, 
+                 static_map = None, 
+                 num_timesteps = TIMESTEPS):
       #remember to set init state for nominal controller before starting
       self.static_map = static_map
-      self.nominal = MPPIRacetrack(static_map = static_map, num_steps_per_rollout=num_timesteps)
+      self.nominal = MPPIRacetrack(
+         static_map=static_map, 
+         num_rollouts_per_iteration=200,
+         num_steps_per_rollout=num_timesteps, 
+         num_iterations=40, 
+         lamb=10, 
+         motion_model=Unicycle()
+      )
+
       self.ancillary = AncillaryILQG(K = num_timesteps)
       self.motion_model = Unicycle()
       self.z = None
@@ -40,14 +52,15 @@ class TubeMPPIRacetrack:
 
     def solve_nominal(self, x):
       """ Use MPPI to solve nominal problem"""
+      self.z = x
       v, score, z_traj = self.nominal.get_action(self.z.copy())
-      v_actual, score_actual, z_traj_actual = self.nominal.get_action(x.copy())
-
+      #v_actual, score_actual, z_traj_actual = self.nominal.get_action(x.copy())
+      '''
       if score_actual <= score + self.threshold:
         self.z = x
         v = v_actual
         z_traj = z_traj_actual
-
+      '''
       z_traj = self.simulate(self.z, v)
       return z_traj, v
 
@@ -71,5 +84,6 @@ class TubeMPPIRacetrack:
       return u, v
     
     def update_goal(self, new_goal):
-        self.nominal.waypoint = np.array(new_goal).reshape((1, -1))
-        self.ancillary.waypoint = np.array(new_goal).reshape((1, -1))
+        """ Update MPPI and LIQG with new goal in world coords """
+        self.nominal.waypoint = np.array([new_goal])#.reshape((1, -1))
+        self.ancillary.waypoint = np.array([new_goal])#.reshape((1, -1))

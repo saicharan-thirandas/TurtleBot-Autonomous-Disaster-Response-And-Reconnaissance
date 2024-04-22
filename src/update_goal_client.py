@@ -15,13 +15,17 @@ sys.path.append(os.path.dirname(__file__))
 from transformation_utils import get_matrix_pose_from_quat, get_quat_pose, calculate_yaw
 from mapping import Mapping
 
+REACHED_GOAL_THRESH = 0.35
+AVOID_OBSTACLE_THRESH = 0.6
+
+
 class GoalUpdater(Mapping):
     def __init__(self):
         super(GoalUpdater, self).__init__()
         rospy.init_node('update_goal', anonymous=True)
 
         self.goal_pose = None
-        self.distance_threshold = 0.85
+        self.distance_threshold = AVOID_OBSTACLE_THRESH
         self.count = 10
 
         self.reset_goal_bool = True # Look for new goal at startup and request new lidar
@@ -84,15 +88,15 @@ class GoalUpdater(Mapping):
             return
 
         # If something is close to the cam and our goal distance is getting close
-        if avg_campov_range < self.distance_threshold and self.goal_distance() < 0.35:
-            rospy.loginfo("CLOSE TO WALL AND REACHED THE GOAL...GOAL RESET")
+        if avg_campov_range < self.distance_threshold and self.goal_distance() < REACHED_GOAL_THRESH:
+            rospy.loginfo("\033[93mCLOSE TO WALL AND REACHED THE GOAL...GOAL RESET\x1b[0m")
             self.reset_goal_bool = True
 
         # Outside the for loop
         if avg_campov_range < self.distance_threshold :
             self.count -= 1
             if self.count <= 1:
-                rospy.loginfo("CLOSE TO WALL...GETTING STUCK...GOAL RESET")
+                rospy.loginfo("\033[91mCLOSE TO WALL...GETTING STUCK...GOAL RESET\x1b[0m")
                 self.count=10
                 self.reset_goal_bool = True
 
@@ -153,7 +157,7 @@ class GoalUpdater(Mapping):
         turtle_pose = self.turtle_pose
 
         # Get turtle pose in occupancy map, get new goal
-        cor_x, cor_y, _  = super()._world_coordinates_to_map_indices(turtle_pose[:2])
+        cor_x, cor_y, grid_w  = super()._world_coordinates_to_map_indices(turtle_pose[:2])
         turtle_grid_pose = np.array([cor_x, cor_y])
         new_target_grid  = self.find_next_goal(turtle_grid_pose, unoccupied_frontiers, occupied_frontiers)
         rospy.loginfo(f"CURRENT TURTLE POSE: {turtle_pose}, GRID COORDS: {cor_x, cor_y}")
@@ -162,7 +166,7 @@ class GoalUpdater(Mapping):
             # Get new Pose
             # self.display_pose_and_goal(turtle_grid_pose, new_target_grid, occupancy_map, unoccupied_frontiers, occupied_frontiers)
             goal_heading = calculate_yaw(new_target_grid[0], new_target_grid[1], *turtle_pose[:2])
-            self.goal_pose = super()._grid_indices_to_coords(*new_target_grid, goal_heading, sign=-1)
+            self.goal_pose = super()._grid_indices_to_coords(*new_target_grid, grid_w)
 
             # Publish pose message
             rospy.loginfo(f"NEW TARGET POSE: {self.goal_pose}, NEW TARGET COORDS: {new_target_grid}")
@@ -177,8 +181,8 @@ class GoalUpdater(Mapping):
         while not rospy.is_shutdown():
 
             # We have reached the goal
-            if self.goal_distance() < 0.35:
-                rospy.loginfo("CLOSE TO GOAL...GOAL RESET")
+            if self.goal_distance() < REACHED_GOAL_THRESH:
+                rospy.loginfo("\033[92mCLOSE TO GOAL...GOAL RESET\x1b[0m")
                 self.reset_goal()
 
             # We have recieved an external goal reset command
