@@ -99,8 +99,10 @@ class AprilTagTracker(Mapping):
                 self.xy_to_ids[occ_map_location] = self.current_id
                 self.current_id += 1
             
-        goal_pose_msg = get_quat_pose(x, y, w, stamped=rospy.get_param('~pose_stamped'))
-        self.goal_publisher.publish(goal_pose_msg)
+        if len(tag_detections.detections) != 0:
+            rospy.loginfo("[TRACKER] DETECTED TAG...GOAL UPDATE")
+            goal_pose_msg = get_quat_pose(x, y, w, stamped=rospy.get_param('~pose_stamped'))
+            self.goal_publisher.publish(goal_pose_msg)
         
         # Publish all tracked tags and their T_CA poses
         tag_msg = AprilTagDetectionArray()
