@@ -373,7 +373,7 @@ class GTSAM(Lidar):
 
         current_pose = result.atPose2( X(self.current_pose_idx) )
         x, y, w = current_pose.x(), current_pose.y(), current_pose.theta()
-        rospy.loginfo(f"3. SLAM POSE: {x, y, w}")
+        # rospy.loginfo(f"3. SLAM POSE: {x, y, w}")
         pose_msg  = get_quat_pose(*self.current_pose, stamped=rospy.get_param('~pose_stamped'))
         self.pose_pub.publish(pose_msg)
         self.current_pose_idx += 1
