@@ -14,6 +14,8 @@ This project presents a comprehensive system for autonomous navigation, mapping,
 
 ## System Architecture
 
+![Architecture](system-architecture.png)
+
 The system is built from the following modules:
 1. **April Tag Detection**: Detects April Tags and estimates their pose relative to the robot.
 2. **SLAM with GTSAM**: Constructs a factor graph for pose estimation and landmark mapping.
@@ -76,7 +78,6 @@ roslaunch squirtle master.launch
 
 ## System Design and Components
 
-![Architecture](system-architecture.png)
 
 ### TurtleBot3 Transformations and Camera Setup
 
