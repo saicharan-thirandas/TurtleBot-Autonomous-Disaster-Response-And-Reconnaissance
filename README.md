@@ -76,13 +76,15 @@ roslaunch squirtle master.launch
 
 ## System Design and Components
 
+![Architecture](system-architecture.png)
+
 ### TurtleBot3 Transformations and Camera Setup
 
 The TurtleBot3’s kinematic chain integrates a camera into its URDF file, ensuring precise transformations for pose estimation. Camera calibration was performed using ROS's Monocular Camera Calibration tool.
 
 ### GTSAM Factor Graph
 
-![Architecture](system-architecture.png)
+![GTSAM](GTSAM.png)
 
 
 GTSAM optimizes the SLAM process using a factor graph approach. It constructs the graph incrementally as the robot navigates, connecting consecutive robot poses through odometry measurements and integrating April Tags as landmarks for enhanced localization accuracy.
